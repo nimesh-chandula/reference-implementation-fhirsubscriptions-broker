@@ -1,16 +1,32 @@
-# Compiled class file
+# Ballerina build artifacts
+**/target/
+**/generated/
+
+# Local runtime configuration — never commit real secrets
+**/Config.toml
+
+# Certificates and private keys — mount as Choreo file secrets at runtime
+**/resources/*.key
+**/resources/*.crt
+
+# Local environment / secrets files
+.env
+**/.env
+.env.local
+
+# Per-developer / local-only state
+deployment-values.local.md
+**/deployment-values.local.md
+.claude/
+**/.claude/
+
+# Java / JVM artifacts (Ballerina compiles to JVM bytecode)
 *.class
-
-# Log file
 *.log
-
-# BlueJ files
+.mtj.tmp/
 *.ctxt
 
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
-
-# Package Files #
+# Java packaging
 *.jar
 *.war
 *.nar
@@ -19,6 +35,14 @@
 *.tar.gz
 *.rar
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+# JVM crash logs
 hs_err_pid*
 replay_pid*
+
+# Editor / IDE
+.idea/
+.vscode/
+
+# OS junk
+.DS_Store
+Thumbs.db

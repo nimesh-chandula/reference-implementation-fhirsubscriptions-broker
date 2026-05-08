@@ -1,0 +1,372 @@
+openapi: 3.0.3
+info:
+  title: FHIR Notification Broker API
+  description: |
+    FHIR R4 Notification Broker — broker-side endpoints (notifications,
+    auth/token, manual subscribe, client registry administration).
+
+    Paths are relative to the `/broker` basePath defined in
+    `.choreo/component.yaml` for the `broker-api` endpoint.
+  version: 1.0.0
+  contact:
+    name: Broker Team
+
+servers:
+  - url: https://localhost:9091
+    description: Local development server
+
+security:
+  - BearerAuth: []
+
+paths:
+  /notification:
+    post:
+      summary: Receive FHIR notification bundle from source system
+      operationId: receiveNotification
+      tags: [Notifications]
+      description: |
+        Endpoint for source systems (hospitals) to send FHIR notification bundles.
+        Processes multi-patient bundles with per-patient MPI resolution and
+        forwards matching notifications to subscribed clients via WebSub.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationBundle'
+      responses:
+        '200':
+          description: Notification processed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  summary:
+                    type: object
+                    properties:
+                      totalPatients:
+                        type: integer
+                      patientsResolved:
+                        type: integer
+                      patientsFailed:
+                        type: integer
+                      totalSubscriptionsMatched:
+                        type: integer
+                      totalNotificationsSent:
+                        type: integer
+                      totalNotificationsFailed:
+                        type: integer
+                  patientResults:
+                    type: array
+                    items:
+                      type: object
+        '500':
+          description: Internal server error
+
+  /subscribe:
+    post:
+      summary: Subscribe to a topic (broker-scoped patient ID)
+      operationId: subscribeToTopic
+      tags: [Subscription]
+      parameters:
+        - name: clientId
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Client identifier for tracking
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [brokerScopedPatientId, callbackUrl]
+              properties:
+                brokerScopedPatientId:
+                  type: string
+                callbackUrl:
+                  type: string
+                  format: uri
+      responses:
+        '200':
+          description: Subscription successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  topic:
+                    type: string
+        '400':
+          description: Invalid request
+
+  /subscriptions/{brokerScopedPatientId}:
+    get:
+      summary: Get all subscriber URLs for a patient topic
+      operationId: getSubscriptions
+      tags: [Subscription]
+      parameters:
+        - name: brokerScopedPatientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of subscriber callback URLs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        '404':
+          description: No subscriptions found
+
+  /clients/{brokerScopedPatientId}:
+    get:
+      summary: Get clients subscribed to a patient
+      operationId: getClientsForPatient
+      tags: [Subscription]
+      parameters:
+        - name: brokerScopedPatientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of client IDs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        '404':
+          description: No clients found
+
+  /auth/token:
+    post:
+      summary: Token endpoint - SMART Permission Tickets & Token Exchange
+      operationId: exchangeToken
+      tags: [Authentication]
+      description: |
+        Dual-purpose token endpoint:
+        1. **SMART Permission Tickets**: Validates client_assertion JWT, extracts demographics,
+           resolves patient via MPI, and issues a patient-bound access token.
+        2. **Token Exchange (RFC 8693)**: Exchanges an Asgardeo ID token for a broker access token,
+           resolving patient via MPI demographics.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                grant_type:
+                  type: string
+                  description: "Use 'urn:ietf:params:oauth:grant-type:token-exchange' for token exchange"
+                client_assertion:
+                  type: string
+                  description: JWT containing demographics and authorization_details (SMART flow)
+                subject_token:
+                  type: string
+                  description: Asgardeo ID token (token exchange flow)
+                subject_token_type:
+                  type: string
+                  description: "Must be 'urn:ietf:params:oauth:token-type:id_token' (token exchange flow)"
+                demographics:
+                  type: string
+                  description: JSON demographics for token exchange (optional fallback)
+      responses:
+        '200':
+          description: Access token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+        '401':
+          description: Unauthorized - invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+
+  /registry:
+    get:
+      summary: List all registered clients
+      operationId: listClients
+      tags: [Admin]
+      security: []
+      description: |
+        Returns all registered clients from both the static Config.toml registry
+        and dynamically registered clients. Each client includes a "source" field
+        indicating whether it came from "config" or "dynamic" registration.
+      responses:
+        '200':
+          description: Map of client name to client details
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  properties:
+                    issuer:
+                      type: string
+                    jwksUri:
+                      type: string
+                    allowedScopes:
+                      type: array
+                      items:
+                        type: string
+                    source:
+                      type: string
+                      enum: [config, dynamic]
+
+  /registry/register:
+    post:
+      summary: Register a new client dynamically
+      operationId: registerClient
+      tags: [Admin]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, issuer, jwksUri]
+              properties:
+                name:
+                  type: string
+                  description: Unique client name
+                issuer:
+                  type: string
+                  description: JWT issuer claim for this client
+                jwksUri:
+                  type: string
+                  format: uri
+                  description: URL of the client's JWKS endpoint
+                allowedScopes:
+                  type: array
+                  items:
+                    type: string
+                  description: FHIR scopes this client is allowed to request
+      responses:
+        '200':
+          description: Client registered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  client:
+                    type: object
+        '400':
+          description: Invalid request or duplicate issuer
+
+  /registry/{clientName}:
+    delete:
+      summary: Delete a dynamically registered client
+      operationId: deleteClient
+      tags: [Admin]
+      parameters:
+        - name: clientName
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the client to delete
+      security: []
+      responses:
+        '200':
+          description: Client deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '400':
+          description: Cannot delete config-based client
+        '404':
+          description: Client not found
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Patient-bound access token from /auth/token
+
+  schemas:
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum: [bearer]
+        expires_in:
+          type: integer
+        patient:
+          type: string
+          description: Broker-scoped patient ID bound to this token
+        scope:
+          type: string
+
+    OAuthError:
+      type: object
+      properties:
+        error:
+          type: string
+        error_description:
+          type: string
+
+    NotificationBundle:
+      type: object
+      properties:
+        resourceType:
+          type: string
+          enum: [Bundle]
+        type:
+          type: string
+          enum: [history, transaction, collection]
+        entry:
+          type: array
+          items:
+            type: object
+            properties:
+              resource:
+                type: object
+
+tags:
+  - name: Authentication
+    description: Token exchange and authentication
+  - name: Subscription
+    description: Broker-level subscription management
+  - name: Notifications
+    description: WebSub callback for incoming FHIR notifications
+  - name: Admin
+    description: Client registry administration

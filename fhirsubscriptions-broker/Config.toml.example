@@ -1,0 +1,118 @@
+# FHIR Notification Broker Configuration — EXAMPLE / TEMPLATE
+#
+# Copy this file to Config.toml and fill in values for your deployment.
+# Config.toml is gitignored — never commit real secrets.
+#
+# Submodule layout: keys for a configurable declared in modules/<name>/ live
+# under [nimesh_chandula.broker.<name>]. Top-level keys belong to main.bal.
+#
+# Override any value via environment variable using Ballerina's configurable
+# mechanism (BAL_CONFIG_FILES or BAL_CONFIG_DATA).
+
+# ============================================================================
+# DEFAULT MODULE (main.bal)
+# ============================================================================
+
+# Port for the broker service
+brokerPort = 9091
+
+# WebSub hub URL where notifications will be published
+webSubHubUrl = "https://<your-websubhub-host>/hub"
+
+# TLS for local listener (optional). Empty → plain HTTP (Choreo's gateway
+# terminates TLS, so leave these unset in Choreo). For local dev, point at
+# any self-signed cert/key pair.
+# tlsCertPath = "resources/server.crt"
+# tlsKeyPath = "resources/server.key"
+
+# List of frontend origins allowed to call the broker from a browser
+# allowedCorsOrigins = ["https://your-app.example.com"]
+
+# ============================================================================
+# AUDIT (modules/audit)
+# ============================================================================
+[nimesh_chandula.broker.audit]
+auditServiceUrl = "https://<your-audit-host>"
+auditEnabled = true
+sourceObserverName = "fhir-notification-broker"
+
+# ============================================================================
+# AUTHENTICATION & AUTHORIZATION (modules/auth)
+# Stores: client assertion validation, subscription token signing,
+# Asgardeo ID-token validation, patient-level authz.
+# ============================================================================
+[nimesh_chandula.broker.auth]
+
+# Expected audience for client assertions (MUST be HTTPS in production)
+tokenAudience = "https://<your-broker-host>/broker/auth/token"
+
+# Subscription token signing keys (RSA-SHA256).
+# Generate keys: openssl genpkey -algorithm RSA -out resources/broker-private.key -pkeyopt rsa_keygen_bits:2048
+#                openssl req -new -x509 -key resources/broker-private.key -out resources/broker-public.crt -days 3650 -subj "/CN=fhir-broker"
+subscriptionTokenPrivateKeyPath = "/etc/choreo-secrets/broker-private.key"
+subscriptionTokenCertPath = "/etc/choreo-secrets/broker-public.crt"
+subscriptionTokenIssuer = "https://<your-broker-host>"
+
+# Enforce token validation on notification retrieval and FHIR proxy endpoints
+requireNotificationAuthz = true
+
+# Subscription authorization Asgardeo app — validates client access tokens
+subscriptionAuthzJwksUrl = "https://api.asgardeo.io/t/<your-tenant>/oauth2/jwks"
+subscriptionAuthzIssuer = "https://api.asgardeo.io/t/<your-tenant>/oauth2/token"
+
+# Patient-level access control (wso2/health.fhir.r4.authz)
+authzEnabled = true
+
+# 1st Asgardeo app — validates incoming ID tokens (token exchange)
+asgardeoJwksUrl = "https://api.asgardeo.io/t/<your-tenant>/oauth2/jwks"
+asgardeoIssuer = "https://api.asgardeo.io/t/<your-tenant>/oauth2/token"
+asgardeoUserInfoUrl = "https://api.asgardeo.io/t/<your-tenant>/oauth2/userinfo"
+
+# Register production client apps. Each entry requires:
+#   issuer        — the 'iss' claim value in client JWTs (must be unique)
+#   jwksUri       — HTTPS endpoint serving the client's public JWKS
+#   allowedScopes — list of SMART scopes this client may request
+#
+# Example:
+# [nimesh_chandula.broker.auth.clientRegistry.my-app]
+# issuer = "https://my-app.example.com"
+# jwksUri = "https://my-app.example.com/.well-known/jwks.json"
+# allowedScopes = ["system/Subscription.crud", "system/Patient.read", "system/Encounter.read"]
+
+# ============================================================================
+# TOKEN ENDPOINT & 2ND ASGARDEO APP TOKEN EXCHANGE (modules/tokens)
+# Broker exchanges 1st app's ID token for a signed access token from this app.
+# ============================================================================
+[nimesh_chandula.broker.tokens]
+asgardeoTokenExchangeUrl = "https://api.asgardeo.io/t/<your-tenant>/oauth2/token"
+# Set via environment variable or secrets manager — never commit real values
+asgardeoTokenExchangeClientId = ""
+asgardeoTokenExchangeClientSecret = ""
+asgardeoTokenExchangeScopes = "system/Subscription.crud system/Patient.read"
+tokenExchangeDefaultScopes = "system/Subscription.crud system/Patient.read"
+
+# ============================================================================
+# CLIENT REGISTRY / MPI (modules/mpi)
+# ============================================================================
+[nimesh_chandula.broker.mpi]
+crServiceUrl = "https://<your-cr-host>/fhir/r4"
+# Set via environment variable or secrets manager — never commit real values
+crAuthToken = ""
+
+# ============================================================================
+# FHIR SERVER (modules/fhir)
+# Owns the FHIR HTTP client used by every module that talks to FHIR.
+# ============================================================================
+[nimesh_chandula.broker.fhir]
+fhirServerUrl = "http://<your-fhir-host>/fhir/r4"
+
+# Broker base URL used in FHIR resource references
+brokerBaseUrl = "https://<your-broker-host>/fhir"
+
+# Allow HTTP callback endpoints for Subscription.channel.endpoint
+# MUST be false in production — HTTP callbacks expose patient data unencrypted
+allowHttpCallbacks = false
+
+# Optional: map FHIR identifier.system URIs to short system IDs for MPI lookup
+# [nimesh_chandula.broker.fhir.systemUriRegistry]
+# "http://hospital-h1.org/patient-ids" = "H001"

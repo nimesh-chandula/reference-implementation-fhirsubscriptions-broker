@@ -1,0 +1,20 @@
+schemaVersion: 1.2
+endpoints:
+  - name: broker-api
+    displayName: FHIR Notification Broker
+    service:
+      basePath: /broker
+      port: 9090
+    type: REST
+    networkVisibilities:
+      - Public
+    schemaFilePath: openapi/broker-api.yaml
+
+  - name: fhir-api
+    displayName: FHIR Proxy
+    service:
+      basePath: /fhir
+      port: 9090
+    type: REST
+    networkVisibilities:
+      - Public
