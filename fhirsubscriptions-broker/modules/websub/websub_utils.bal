@@ -7,15 +7,27 @@ import ballerina/time;
 import nimesh_chandula/broker.audit;
 import nimesh_chandula/broker.common;
 
+// Disables TLS certificate verification for the WebSub hub client. Defaults to
+// false so HTTPS hubs are verified; only set to true for local/dev hubs with
+// self-signed certs.
+configurable boolean disableHubTlsVerification = false;
+
+function buildHubClient(string webSubHubUrl) returns http:Client|error {
+    if disableHubTlsVerification {
+        return new (webSubHubUrl, {
+            secureSocket: {
+                enable: false
+            }
+        });
+    }
+    return new (webSubHubUrl);
+}
+
 // Register a topic with the WebSub hub
 public function registerWebSubTopic(string topicId, string webSubHubUrl) returns error? {
     log:printInfo(string `[WEBSUB REGISTER] Attempting to register topic: ${topicId} at ${webSubHubUrl}`);
 
-    http:Client hubClient = check new (webSubHubUrl, {
-        secureSocket: {
-            enable: false
-        }
-    });
+    http:Client hubClient = check buildHubClient(webSubHubUrl);
 
     string body = string `hub.mode=register&hub.topic=${common:urlEncode(topicId)}`;
     log:printInfo(string `[WEBSUB REGISTER] Request body: ${body}`);
@@ -54,11 +66,7 @@ public function registerWebSubTopic(string topicId, string webSubHubUrl) returns
 public function subscribeToWebSubHub(string topicId, string callbackUrl, string? sharedSecret, string webSubHubUrl) returns error? {
     log:printInfo(string `[WEBSUB SUBSCRIBE] Attempting to subscribe topic: ${topicId}, callback: ${callbackUrl}`);
 
-    http:Client hubClient = check new (webSubHubUrl, {
-        secureSocket: {
-            enable: false
-        }
-    });
+    http:Client hubClient = check buildHubClient(webSubHubUrl);
 
     string secret = (sharedSecret is string && sharedSecret.trim() != "") ? sharedSecret : common:DEFAULT_WEBSUB_SECRET;
     string body = string `hub.mode=subscribe&hub.topic=${common:urlEncode(topicId)}&hub.callback=${common:urlEncode(callbackUrl)}&hub.secret=${common:urlEncode(secret)}`;
@@ -96,11 +104,7 @@ public function subscribeToWebSubHub(string topicId, string callbackUrl, string?
 
 // Publish notification to WebSub hub
 public function publishToWebSubHub(string topicId, SubscriptionNotificationBundle bundle, string webSubHubUrl, map<string[]> clientNotificationHeaders) returns error? {
-    http:Client hubClient = check new (webSubHubUrl, {
-        secureSocket: {
-            enable: false
-        }
-    });
+    http:Client hubClient = check buildHubClient(webSubHubUrl);
 
     string hubUrl = string `?hub.mode=publish&hub.topic=${common:urlEncode(topicId)}`;
 

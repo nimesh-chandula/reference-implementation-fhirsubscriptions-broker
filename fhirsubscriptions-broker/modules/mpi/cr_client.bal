@@ -240,13 +240,12 @@ function crAddMapping(string systemId, string systemPatientId, string brokerScop
     map<json> updatedPatient = getResponse.clone();
     updatedPatient["identifier"] = identifiers;
 
-    string identifierParam = string `${systemUri}|${systemPatientId}`;
     http:Request req = new;
     req.setJsonPayload(updatedPatient);
     req.setHeader("Content-Type", "application/fhir+json");
     setCrAuthHeaders(req);
 
-    http:Response putResponse = check crClient->/Patient.put(req, headers = {"identifier": identifierParam});
+    http:Response putResponse = check crClient->/Patient/[brokerScopedPatientId].put(req);
 
     if putResponse.statusCode >= 200 && putResponse.statusCode < 300 {
         log:printInfo(string `[CR] Identifier mapping added successfully`);

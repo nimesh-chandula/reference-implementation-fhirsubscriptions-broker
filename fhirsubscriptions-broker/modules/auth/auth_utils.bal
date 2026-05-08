@@ -6,27 +6,16 @@ import ballerina/lang.'array;
 
 import ballerina/jwt;
 import ballerina/log;
-import ballerina/time;
 
 import nimesh_chandula/broker.common;
 import nimesh_chandula/broker.fhir;
 
-// Static client registry for JWT validation (from Config.toml).
-// Public so the root registry handler can list both static and dynamic entries.
+// Static client registry, retained for the /broker/registry admin endpoints.
 public configurable map<common:ClientRegistration> clientRegistry = {};
 
 // Dynamic client registry for runtime-registered clients (via admin API).
 public map<common:ClientRegistration> dynamicClientRegistry = {};
 
-// Expected audience for client assertions (MUST be HTTPS in production)
-configurable string tokenAudience = "https://localhost:9090/broker/auth/token";
-
-// ============================================================================
-// SUBSCRIPTION TOKEN SIGNING CONFIGURATION (RSA-SHA256)
-// ============================================================================
-configurable string subscriptionTokenPrivateKeyPath = "/etc/choreo-secrets/broker-private.key";
-configurable string subscriptionTokenCertPath = "/etc/choreo-secrets/broker-public.crt";
-configurable string subscriptionTokenIssuer = "https://broker.example.org";
 public configurable boolean requireNotificationAuthz = false;
 
 // ============================================================================
@@ -51,137 +40,9 @@ public configurable string asgardeoUserInfoUrl = "https://api.asgardeo.io/t/fhir
 // JWT UTILITIES
 // ============================================================================
 
-// Validate client assertion (RS256) using JWKS with kid matching
-public function validateClientAssertion(string clientAssertion) returns common:ClientAssertionInfo|error {
-    log:printInfo("[JWT VALIDATION] Starting client assertion validation");
-
-    [jwt:Header, jwt:Payload] [header, preliminaryPayload] = check jwt:decode(clientAssertion);
-
-    if header.alg is () || header.alg != jwt:RS256 {
-        return error("Unsupported JWT algorithm; RS256 is required");
-    }
-    log:printInfo("[JWT VALIDATION] Algorithm: RS256");
-
-    string? kidOpt = header.kid;
-    if kidOpt is () {
-        return error("Missing kid (Key ID) in JWT header. JWKS implementation requires kid.");
-    }
-    string kid = kidOpt;
-    log:printInfo(string `[JWT VALIDATION] Key ID (kid): ${kid}`);
-
-    string? issuerOpt = preliminaryPayload.iss;
-    if issuerOpt is () {
-        return error("Missing iss claim in JWT");
-    }
-    string issuer = issuerOpt;
-    log:printInfo(string `[JWT VALIDATION] Issuer: ${issuer}`);
-
-    common:ClientRegistration? registration = ();
-    string registrationKey = "";
-    foreach var [key, reg] in clientRegistry.entries() {
-        if reg.issuer == issuer {
-            registration = reg;
-            registrationKey = key;
-            break;
-        }
-    }
-    if registration is () {
-        foreach var [key, reg] in dynamicClientRegistry.entries() {
-            if reg.issuer == issuer {
-                registration = reg;
-                registrationKey = key;
-                break;
-            }
-        }
-    }
-
-    if registration is () {
-        string availableIssuers = "";
-        foreach var reg in clientRegistry {
-            availableIssuers = availableIssuers + reg.issuer + ", ";
-        }
-        foreach var reg in dynamicClientRegistry {
-            availableIssuers = availableIssuers + reg.issuer + ", ";
-        }
-        log:printError(string `[JWT VALIDATION] Unknown issuer: ${issuer}`);
-        return error(string `Unknown client issuer: '${issuer}'. Registered issuers: ${availableIssuers}`);
-    }
-    log:printInfo(string `[JWT VALIDATION] Found registration: ${registrationKey}`);
-
-    log:printInfo(string `[JWT VALIDATION] Configuring validator with JWKS URI: ${registration.jwksUri}`);
-
-    jwt:ValidatorConfig validatorConfig = {
-        issuer: registration.issuer,
-        audience: tokenAudience,
-        clockSkew: common:JWT_CLOCK_SKEW,
-        signatureConfig: {
-            jwksConfig: {
-                url: registration.jwksUri,
-                cacheConfig: {
-                    capacity: 10,
-                    evictionFactor: 0.25,
-                    evictionPolicy: "LRU",
-                    defaultMaxAge: 3600
-                }
-            }
-        }
-    };
-
-    log:printInfo("[JWT VALIDATION] Validating JWT signature with JWKS from URI");
-    jwt:Payload validatedPayload = check jwt:validate(clientAssertion, validatorConfig);
-    log:printInfo("[JWT VALIDATION] JWT signature validated successfully");
-
-    log:printInfo(string `[JWT VALIDATION] Validated payload keys: ${validatedPayload.keys().toString()}`);
-    json payloadJson = validatedPayload.toJson();
-    log:printInfo(string `[JWT VALIDATION] Full validated payload: ${payloadJson.toJsonString()}`);
-
-    map<json> claims = {};
-
-    anydata customClaimsData = validatedPayload["customClaims"];
-    if customClaimsData is map<json> {
-        claims = customClaimsData.clone();
-        log:printInfo(string `[JWT VALIDATION] Extracted custom claims from customClaims field: ${claims.keys().toString()}`);
-    } else {
-        log:printInfo("[JWT VALIDATION] No customClaims field found, extracting from payload root");
-
-        json payloadJsonData = validatedPayload.toJson();
-        if payloadJsonData is map<json> {
-            foreach [string, json] [key, value] in payloadJsonData.entries() {
-                if key != "iss" && key != "sub" && key != "aud" && key != "exp" &&
-                   key != "iat" && key != "nbf" && key != "jti" {
-                    claims[key] = value;
-                }
-            }
-            log:printInfo(string `[JWT VALIDATION] Extracted custom claims from payload root: ${claims.keys().toString()}`);
-        }
-    }
-
-    if validatedPayload.iss is string {
-        claims["iss"] = validatedPayload.iss;
-    }
-    if validatedPayload.sub is string {
-        claims["sub"] = validatedPayload.sub;
-    }
-    if validatedPayload.aud is string || validatedPayload.aud is string[] {
-        claims["aud"] = validatedPayload.aud;
-    }
-    if validatedPayload.exp is int {
-        claims["exp"] = validatedPayload.exp;
-    }
-    if validatedPayload.iat is int {
-        claims["iat"] = validatedPayload.iat;
-    }
-
-    log:printInfo(string `[JWT VALIDATION] Total claims extracted: ${claims.keys().toString()}`);
-    log:printInfo(string `[JWT VALIDATION] Validation complete for client: ${issuer}`);
-    return {
-        clientId: issuer,
-        claims: claims,
-        registration: registration
-    };
-}
-
-// Decode JWT payload without cryptographic validation
+// Decode JWT payload without cryptographic validation.
+// Callers MUST only invoke this on tokens that were already verified upstream
+// (e.g. Asgardeo token-endpoint responses, or after `validateResourceAccess`).
 public function decodeJWTPayload(string jwtToken) returns json|error {
     string:RegExp dotPattern = re `\.`;
     string[] parts = dotPattern.split(jwtToken);
@@ -207,254 +68,12 @@ public function decodeJWTPayload(string jwtToken) returns json|error {
     return payload;
 }
 
-// Convert bytes to base64url encoding (used in JWTs)
-function toBase64Url(byte[] data) returns string {
-    string base64Value = 'array:toBase64(data);
-    string:RegExp plusPattern = re `\+`;
-    string result1 = plusPattern.replaceAll(base64Value, "-");
-    string:RegExp slashPattern = re `/`;
-    string result2 = slashPattern.replaceAll(result1, "_");
-    string:RegExp paddingPattern = re `=+$`;
-    string finalResult = paddingPattern.replaceAll(result2, "");
-    return finalResult;
-}
-
-// Generate SMART-compliant access token with FHIR context
-public function generateSmartAccessToken(string patientId, common:AuthorizationDetail[] authDetails, string clientId) returns string|error {
-    log:printInfo(string `[TOKEN GEN] Generating SMART access token for patient: ${patientId}`);
-
-    json fhirContextClaim = {
-        "reference": string `Patient/${patientId}`,
-        "resourceType": "Patient"
-    };
-
-    string scopeStr = generateSmartScopes(authDetails);
-
-    json tokenPayload = {
-        "sub": patientId,
-        "patient": patientId,
-        "client_id": clientId,
-        "scope": scopeStr,
-        "aud": "https://fhir-server/",
-        "iat": time:utcNow()[0],
-        "exp": time:utcNow()[0] + common:TOKEN_EXPIRY_SECONDS,
-        "fhirContext": [fhirContextClaim]
-    };
-
-    string headerJson = string `{"alg":"none","typ":"JWT"}`;
-    string header = toBase64Url(headerJson.toBytes());
-    string payload = toBase64Url(tokenPayload.toJsonString().toBytes());
-
-    string accessToken = string `${header}.${payload}.mock-sig`;
-    log:printInfo(string `[TOKEN GEN] Access token generated with scope: ${scopeStr}`);
-
-    return accessToken;
-}
-
-// Generate SMART-compliant scope strings from authorization details
-public function generateSmartScopes(common:AuthorizationDetail[] authDetails) returns string {
-    string[] scopes = [];
-    foreach common:AuthorizationDetail detail in authDetails {
-        foreach string action in detail.actions {
-            string resourceType = detail.resourceType;
-            string scope = string `system/${resourceType}.${action}`;
-            scopes.push(scope);
-        }
-    }
-    return string:'join(" ", ...scopes);
-}
-
-// Validate requested scopes against the registered client allow-list
-public function validateAllowedScopes(common:AuthorizationDetail[] authDetails, string[] allowedScopes) returns error? {
-    if allowedScopes.length() == 0 {
-        return ();
-    }
-
-    map<boolean> allowedSet = {};
-    foreach string scope in allowedScopes {
-        allowedSet[scope] = true;
-    }
-
-    string requestedScopes = generateSmartScopes(authDetails);
-    string:RegExp splitPattern = re `\s+`;
-    string[] requested = splitPattern.split(requestedScopes);
-
-    foreach string scope in requested {
-        if scope.length() == 0 {
-            continue;
-        }
-        if !allowedSet.hasKey(scope) {
-            return error(string `Requested scope not allowed: ${scope}`);
-        }
-    }
-
-    return ();
-}
-
 // Extract bearer token from Authorization header
 public function extractBearerToken(string authorization) returns string|error {
     if !authorization.startsWith("Bearer ") {
         return error("Authorization must use Bearer scheme");
     }
     return authorization.substring(7);
-}
-
-// Extract client ID from access token
-// Priority: client_app_id (2nd Asgardeo app custom claim) → client_id (SMART tokens)
-//           → sub with mapping lookup (interim fallback) → sub → iss
-public function extractClientIdFromAccessToken(string accessToken) returns string|error {
-    json|error payload = decodeJWTPayload(accessToken);
-    if payload is error || payload !is map<json> {
-        return error("Invalid access token");
-    }
-
-    map<json> tokenMap = <map<json>>payload;
-
-    json? clientAppIdJson = tokenMap["client_app_id"];
-    if clientAppIdJson is string {
-        return clientAppIdJson;
-    }
-
-    json? clientIdJson = tokenMap["client_id"];
-    if clientIdJson is string {
-        return clientIdJson;
-    }
-
-    json? subJson = tokenMap["sub"];
-    if subJson is string {
-        string? clientAppId = common:getUserClientApp(subJson);
-        if clientAppId is string {
-            return clientAppId;
-        }
-        [string, string?]|error fhirResult = fhir:resolvePatientBySub(fhir:fhirServerClient, subJson);
-        if fhirResult is [string, string?] {
-            string? resolvedClientAppId = fhirResult[1];
-            if resolvedClientAppId is string {
-                common:setUserClientApp(subJson, resolvedClientAppId);
-                return resolvedClientAppId;
-            }
-        }
-        return subJson;
-    }
-
-    json? issJson = tokenMap["iss"];
-    if issJson is string {
-        return issJson;
-    }
-
-    return error("Missing client identifier in access token");
-}
-
-// Validate permission ticket follows SMART spec
-public function validateSmartPermissionTicket(json permissionTicket) returns boolean|error {
-    log:printInfo("[SMART VALIDATION] Validating permission ticket");
-
-    if permissionTicket !is map<json> {
-        log:printError("[SMART VALIDATION] Permission ticket is not a JSON object");
-        return false;
-    }
-
-    map<json> ticketMap = <map<json>>permissionTicket;
-
-    if !ticketMap.hasKey("iss") || !ticketMap.hasKey("aud") {
-        log:printError("[SMART VALIDATION] Missing iss or aud claim");
-        return false;
-    }
-
-    if !ticketMap.hasKey("exp") {
-        log:printError("[SMART VALIDATION] Missing exp claim");
-        return false;
-    }
-
-    json? expJson = ticketMap["exp"];
-    if expJson is int {
-        int currentTime = time:utcNow()[0];
-        if currentTime > expJson {
-            log:printError("[SMART VALIDATION] Permission ticket expired");
-            return error("Permission ticket expired");
-        }
-    }
-
-    if !ticketMap.hasKey("authorization_details") && !ticketMap.hasKey("permission_tickets") {
-        log:printError("[SMART VALIDATION] Missing authorization_details or permission_tickets");
-        return error("Missing authorization_details or permission_tickets");
-    }
-
-    log:printInfo("[SMART VALIDATION] Permission ticket valid");
-    return true;
-}
-
-// Extract authorization details from permission ticket
-public function extractSmartAuthorizationDetails(json permissionTicket) returns common:AuthorizationDetail[]|error {
-    log:printInfo("[SMART AUTH] Extracting authorization details");
-
-    if permissionTicket !is map<json> {
-        log:printError("[SMART AUTH] Permission ticket is not a JSON object");
-        return error("Invalid permission ticket format");
-    }
-
-    map<json> ticketMap = <map<json>>permissionTicket;
-
-    json? authDetailsJson = ticketMap["authorization_details"];
-    if authDetailsJson is json[] {
-        common:AuthorizationDetail[] details = [];
-        foreach json detail in authDetailsJson {
-            common:AuthorizationDetail authDetail = check detail.cloneWithType();
-            details.push(authDetail);
-        }
-        return details;
-    }
-
-    json? permissionTicketsJson = ticketMap["permission_tickets"];
-    if permissionTicketsJson is json[] && permissionTicketsJson.length() > 0 {
-        json firstTicket = permissionTicketsJson[0];
-        if firstTicket is map<json> {
-            json? ticketContext = firstTicket["ticket_context"];
-            if ticketContext is map<json> {
-                json? capability = ticketContext["capability"];
-                if capability is map<json> {
-                    json? scopesJsonRaw = capability["scopes"];
-                    if scopesJsonRaw is json[] {
-                        string[] scopes = [];
-                        foreach json scopeItem in scopesJsonRaw {
-                            if scopeItem is string {
-                                scopes.push(scopeItem);
-                            }
-                        }
-
-                        if scopes.length() > 0 {
-                            common:AuthorizationDetail[] details = [];
-                            foreach string scope in scopes {
-                                string:RegExp slashPattern = re `/`;
-                                string[] parts = slashPattern.split(scope);
-                                if parts.length() == 2 {
-                                    string:RegExp dotPattern = re `\.`;
-                                    string[] resourceParts = dotPattern.split(parts[1]);
-                                    if resourceParts.length() == 2 {
-                                        string resourceType = resourceParts[0];
-                                        string action = resourceParts[1];
-                                        common:AuthorizationDetail detail = {
-                                            'type: "fhir",
-                                            fhirContext: [],
-                                            actions: [action],
-                                            resourceType: resourceType
-                                        };
-                                        details.push(detail);
-                                    }
-                                }
-                            }
-                            if details.length() > 0 {
-                                return details;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    log:printError("[SMART AUTH] Invalid authorization_details or permission_tickets format");
-    return error("Invalid authorization_details or permission_tickets format");
 }
 
 // ============================================================================
@@ -680,136 +299,15 @@ public function parseDemographicsFromJson(string demographicsJson) returns commo
     return demographics;
 }
 
-// Generate broker access token for token exchange flow
-public function generateBrokerAccessToken(string patientId, string subject, string scope) returns string|error {
-    log:printInfo(string `[TOKEN EXCHANGE] Generating broker access token for patient: ${patientId}`);
-
-    json tokenPayload = {
-        "sub": subject,
-        "patient": patientId,
-        "scope": scope,
-        "aud": "https://fhir-broker/",
-        "iss": "https://broker.example.org",
-        "iat": time:utcNow()[0],
-        "exp": time:utcNow()[0] + common:TOKEN_EXPIRY_SECONDS,
-        "token_type": "bearer"
-    };
-
-    string headerJson = string `{"alg":"none","typ":"JWT"}`;
-    string header = toBase64Url(headerJson.toBytes());
-    string payload = toBase64Url(tokenPayload.toJsonString().toBytes());
-
-    string accessToken = string `${header}.${payload}.broker-sig`;
-    log:printInfo(string `[TOKEN EXCHANGE] Access token generated with scope: ${scope}`);
-
-    return accessToken;
-}
-
 // ============================================================================
-// SUBSCRIPTION TOKEN GENERATION & VALIDATION (RSA-SHA256)
+// SUBSCRIPTION ACCESS TOKEN VALIDATION (Asgardeo App 2)
 // ============================================================================
 
-// Generate an RSA-signed subscription token for a client
-public function generateSubscriptionToken(string clientId, string subscriptionId, string brokerScopedPatientId, string[] resourceTypes) returns string|error {
-    log:printInfo(string `[SUBSCRIPTION TOKEN] Generating RSA-signed token for client=${clientId}, subscription=${subscriptionId}`);
-
-    map<json> customClaims = {
-        "client_id": clientId,
-        "subscription_id": subscriptionId,
-        "patient": brokerScopedPatientId,
-        "resource_types": resourceTypes.toJson(),
-        "token_type": "subscription"
-    };
-
-    jwt:IssuerConfig issuerConfig = {
-        issuer: subscriptionTokenIssuer,
-        expTime: <decimal>common:SUBSCRIPTION_TOKEN_EXPIRY_SECONDS,
-        signatureConfig: {
-            algorithm: jwt:RS256,
-            config: {
-                keyFile: subscriptionTokenPrivateKeyPath
-            }
-        },
-        customClaims: customClaims
-    };
-
-    string token = check jwt:issue(issuerConfig);
-    log:printInfo(string `[SUBSCRIPTION TOKEN] Token generated successfully for client=${clientId}`);
-    return token;
-}
-
-// Validate a broker-issued subscription token (RSA-SHA256)
-public function validateSubscriptionToken(string token) returns common:ValidatedSubscriptionToken|error {
-    log:printInfo("[SUBSCRIPTION TOKEN] Validating broker-issued subscription token");
-
-    jwt:ValidatorConfig validatorConfig = {
-        issuer: subscriptionTokenIssuer,
-        clockSkew: common:JWT_CLOCK_SKEW,
-        signatureConfig: {
-            certFile: subscriptionTokenCertPath
-        }
-    };
-
-    jwt:Payload validatedPayload = check jwt:validate(token, validatorConfig);
-
-    map<json> claims = {};
-    json payloadJson = validatedPayload.toJson();
-    if payloadJson is map<json> {
-        claims = payloadJson.clone();
-    }
-
-    string? clientId = ();
-    json? clientIdJson = claims["client_id"];
-    if clientIdJson is string {
-        clientId = clientIdJson;
-    }
-
-    string? subscriptionId = ();
-    json? subIdJson = claims["subscription_id"];
-    if subIdJson is string {
-        subscriptionId = subIdJson;
-    }
-
-    string? patient = ();
-    json? patientJson = claims["patient"];
-    if patientJson is string {
-        patient = patientJson;
-    }
-
-    string[]? resourceTypes = ();
-    json? rtJson = claims["resource_types"];
-    if rtJson is json[] {
-        string[] rt = [];
-        foreach json item in rtJson {
-            if item is string {
-                rt.push(item);
-            }
-        }
-        resourceTypes = rt;
-    }
-
-    if clientId is () || subscriptionId is () || patient is () {
-        return error("Subscription token missing required claims (client_id, subscription_id, patient)");
-    }
-
-    log:printInfo(string `[SUBSCRIPTION TOKEN] Token validated: client=${clientId}, patient=${patient}`);
-    return {
-        clientId: clientId,
-        subscriptionId: subscriptionId,
-        patient: patient,
-        resourceTypes: resourceTypes
-    };
-}
-
-// Validate an access token for subscription endpoints
-// Tries broker-issued subscription token first, then falls back to Asgardeo token
+// Validate an access token presented to subscription/notification endpoints
+// against the Asgardeo App 2 JWKS. Returns the resolved client identity, the
+// patient (resolved from claims or from FHIR via `sub` lookup), and the full
+// verified claims for downstream patient-level checks.
 public function validateSubscriptionAccessToken(string token) returns common:ValidatedSubscriptionToken|error {
-    common:ValidatedSubscriptionToken|error brokerResult = validateSubscriptionToken(token);
-    if brokerResult is common:ValidatedSubscriptionToken {
-        return brokerResult;
-    }
-    log:printInfo("[SUBSCRIPTION AUTH] Not a broker token, trying Asgardeo validation");
-
     jwt:ValidatorConfig asgardeoConfig = {
         issuer: subscriptionAuthzIssuer,
         clockSkew: common:JWT_CLOCK_SKEW,
@@ -890,6 +388,7 @@ public function validateSubscriptionAccessToken(string token) returns common:Val
             [string, string?]|error fhirResult = fhir:resolvePatientBySub(fhir:fhirServerClient, subJson);
             if fhirResult is [string, string?] {
                 patient = fhirResult[0];
+                claims["patient"] = patient;
                 log:printInfo(string `[SUBSCRIPTION AUTH] Resolved patient from FHIR: ${patient ?: ""}`);
             }
         }
@@ -899,7 +398,8 @@ public function validateSubscriptionAccessToken(string token) returns common:Val
     return {
         clientId: clientId,
         subscriptionId: "",
-        patient: patient ?: ""
+        patient: patient ?: "",
+        claims: claims
     };
 }
 

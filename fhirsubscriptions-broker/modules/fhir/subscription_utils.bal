@@ -63,28 +63,15 @@ public function publishToTopic(
 
     log:printInfo(string `[PUBLISH] Processing ${clinicalResourceType}/${clinicalResourceId} for client ${clientId}`);
 
-    common:ClientEventState eventState;
-    common:ClientEventState? existingState = ensureEventState(clientId);
-    if existingState is common:ClientEventState {
-        eventState = existingState;
-    } else {
-        eventState = {
-            lastEventNumber: 0,
-            totalEventsSinceStart: 0
-        };
-    }
-
-    int newEventNumber = eventState.lastEventNumber + 1;
-    int newTotalEvents = eventState.totalEventsSinceStart + 1;
-
-    string storedResourceId = string `${clientId}-${newEventNumber}`;
-
-    log:printInfo(string `[PUBLISH] Assigning event number ${newEventNumber} for client ${clientId}, resourceId=${storedResourceId}`);
+    // Warm common:clientEventCounters[clientId] outside the lock so the
+    // potential cold-start FHIR GET in ensureEventState does not block other clients.
+    _ = ensureEventState(clientId);
 
     string timestamp = time:utcToString(time:utcNow());
-
     map<string|string[]> fhirHeaders = {"Content-Type": "application/fhir+json"};
 
+    // Patient PUT is independent of the event sequence number; perform it before
+    // the locked critical section to keep lock-hold time minimal.
     if patientResource is map<json> && patientId is string {
         map<json> patientToStore = patientResource.clone();
         patientToStore["id"] = patientId;
@@ -105,71 +92,95 @@ public function publishToTopic(
         }
     }
 
-    map<json> resourceToStore = (<map<json>>clinicalResource).clone();
-    resourceToStore["id"] = storedResourceId;
-    resourceToStore["meta"] = { "lastUpdated": timestamp };
+    // Commit-on-success: serialize per-broker so the event-number reservation,
+    // the FHIR resource POSTs, and the in-memory counter advance happen as one
+    // step. The counter is only written if BOTH the clinical and Communication
+    // POSTs return 2xx, so a failure leaves the next call to retry the same
+    // number — consumers therefore never see a phantom gap in the sequence.
+    int newEventNumber;
+    int newTotalEvents;
+    string storedResourceId;
+    lock {
+        common:ClientEventState? current = common:clientEventCounters[clientId];
+        int candidateEventNumber = (current is common:ClientEventState ? current.lastEventNumber : 0) + 1;
+        int candidateTotal = (current is common:ClientEventState ? current.totalEventsSinceStart : 0) + 1;
+        string candidateStoredId = string `${clientId}-${candidateEventNumber}`;
 
-    string resourcePath = string `/${clinicalResourceType}`;
-    log:printInfo(string `[PUBLISH] Storing ${clinicalResourceType}/${storedResourceId} in FHIR server via POST`);
+        log:printInfo(string `[PUBLISH] Assigning event number ${candidateEventNumber} for client ${clientId}, resourceId=${candidateStoredId}`);
 
-    http:Response|error storeResponse = fhirServerClient->post(resourcePath, resourceToStore, fhirHeaders);
+        map<json> resourceToStore = (<map<json>>clinicalResource).clone();
+        resourceToStore["id"] = candidateStoredId;
+        resourceToStore["meta"] = { "lastUpdated": timestamp };
 
-    if storeResponse is error {
-        log:printError(string `[PUBLISH] Failed to store ${clinicalResourceType}/${storedResourceId}: ${storeResponse.message()}`);
-        return error(string `Failed to store resource: ${storeResponse.message()}`);
-    }
+        string resourcePath = string `/${clinicalResourceType}`;
+        log:printInfo(string `[PUBLISH] Storing ${clinicalResourceType}/${candidateStoredId} in FHIR server via POST`);
 
-    http:Response resp = storeResponse;
-    int statusCode = resp.statusCode;
+        http:Response|error storeResponse = fhirServerClient->post(resourcePath, resourceToStore, fhirHeaders);
 
-    if statusCode >= 200 && statusCode < 300 {
-        log:printInfo(string `[PUBLISH] Successfully stored ${clinicalResourceType}/${storedResourceId}`);
-    } else {
-        string|error body = resp.getTextPayload();
-        string bodyStr = body is string ? body : "unknown";
-        log:printError(string `[PUBLISH] FHIR server rejected resource storage: status=${statusCode}, body=${bodyStr}`);
-        return error(string `FHIR server rejected storage: ${bodyStr}`);
-    }
-
-    string clinicalReference = string `${clinicalResourceType}/${storedResourceId}`;
-    json communicationResource = {
-        "resourceType": "Communication",
-        "id": storedResourceId,
-        "status": "completed",
-        "subject": patientId is string ? { "reference": string `Patient/${patientId}` } : null,
-        "category": [{
-            "coding": [{
-                "system": "http://terminology.hl7.org/CodeSystem/communication-category",
-                "code": "notification"
-            }]
-        }],
-        "identifier": [{
-            "system": "https://broker.example.org/event-sequence",
-            "value": newEventNumber.toString()
-        }],
-        "payload": [{
-            "contentReference": { "reference": clinicalReference }
-        }]
-    };
-
-    string communicationPath = string `/Communication`;
-    http:Response|error commResponse = fhirServerClient->post(communicationPath, communicationResource, fhirHeaders);
-
-    if commResponse is error {
-        log:printWarn(string `[PUBLISH] Failed to store Communication/${storedResourceId}: ${commResponse.message()}`);
-    } else {
-        http:Response commResp = commResponse;
-        if commResp.statusCode >= 200 && commResp.statusCode < 300 {
-            log:printInfo(string `[PUBLISH] Stored Communication/${storedResourceId} -> ${clinicalReference}`);
-        } else {
-            string|error body = commResp.getTextPayload();
-            log:printWarn(string `[PUBLISH] Communication storage returned ${commResp.statusCode}: ${body is string ? body : "unknown"}`);
+        if storeResponse is error {
+            log:printError(string `[PUBLISH] Failed to store ${clinicalResourceType}/${candidateStoredId}: ${storeResponse.message()}`);
+            return error(string `Failed to store resource: ${storeResponse.message()}`);
         }
+
+        http:Response resp = storeResponse;
+        int statusCode = resp.statusCode;
+
+        if statusCode < 200 || statusCode >= 300 {
+            string|error body = resp.getTextPayload();
+            string bodyStr = body is string ? body : "unknown";
+            log:printError(string `[PUBLISH] FHIR server rejected resource storage: status=${statusCode}, body=${bodyStr}`);
+            return error(string `FHIR server rejected storage: ${bodyStr}`);
+        }
+        log:printInfo(string `[PUBLISH] Successfully stored ${clinicalResourceType}/${candidateStoredId}`);
+
+        string candidateClinicalReference = string `${clinicalResourceType}/${candidateStoredId}`;
+        json communicationResource = {
+            "resourceType": "Communication",
+            "id": candidateStoredId,
+            "status": "completed",
+            "subject": patientId is string ? { "reference": string `Patient/${patientId}` } : null,
+            "category": [{
+                "coding": [{
+                    "system": "http://terminology.hl7.org/CodeSystem/communication-category",
+                    "code": "notification"
+                }]
+            }],
+            "identifier": [{
+                "system": "https://broker.example.org/event-sequence",
+                "value": candidateEventNumber.toString()
+            }],
+            "payload": [{
+                "contentReference": { "reference": candidateClinicalReference }
+            }]
+        };
+
+        string communicationPath = string `/Communication`;
+        http:Response|error commResponse = fhirServerClient->post(communicationPath, communicationResource, fhirHeaders);
+
+        if commResponse is error {
+            log:printError(string `[PUBLISH] Failed to store Communication/${candidateStoredId}: ${commResponse.message()}`);
+            return error(string `Failed to store Communication: ${commResponse.message()}`);
+        }
+        http:Response commResp = commResponse;
+        if commResp.statusCode < 200 || commResp.statusCode >= 300 {
+            string|error body = commResp.getTextPayload();
+            string bodyStr = body is string ? body : "unknown";
+            log:printError(string `[PUBLISH] Communication storage returned ${commResp.statusCode}: ${bodyStr}`);
+            return error(string `Communication storage rejected: ${bodyStr}`);
+        }
+        log:printInfo(string `[PUBLISH] Stored Communication/${candidateStoredId} -> ${candidateClinicalReference}`);
+
+        // Both writes succeeded — commit the counter.
+        common:clientEventCounters[clientId] = {
+            lastEventNumber: candidateEventNumber,
+            totalEventsSinceStart: candidateTotal
+        };
+        newEventNumber = candidateEventNumber;
+        newTotalEvents = candidateTotal;
+        storedResourceId = candidateStoredId;
     }
 
-    eventState.lastEventNumber = newEventNumber;
-    eventState.totalEventsSinceStart = newTotalEvents;
-    clientEventCounters[clientId] = eventState;
+    // FHIR Basic mirror (recovery aid) and WebSub push are off the critical path.
     updateEventStateInFhirServer(fhirServerClient, clientId, newEventNumber, newTotalEvents);
 
     websub:SubscriptionNotificationBundle bundle = websub:createSubscriptionNotificationBundle(
@@ -328,16 +339,30 @@ function recoverEventStateFromFhirServer(http:Client fhirClient, string clientId
 
 // Ensure event state is loaded for a client (check in-memory first, then FHIR server)
 public function ensureEventState(string clientId) returns common:ClientEventState? {
-    common:ClientEventState? state = common:clientEventCounters[clientId];
-    if state is common:ClientEventState {
-        return state;
+    lock {
+        common:ClientEventState? state = common:clientEventCounters[clientId];
+        if state is common:ClientEventState {
+            return state.clone();
+        }
     }
 
+    // FHIR GET stays outside the lock — it is network I/O on cold-start and
+    // must not serialize the publish path for unrelated clients.
     common:ClientEventState? recovered = recoverEventStateFromFhirServer(fhirServerClient, clientId);
     if recovered is common:ClientEventState {
-        common:clientEventCounters[clientId] = recovered;
-        log:printInfo(string `[EVENT STATE] Restored in-memory state for ${clientId} from FHIR server`);
-        return recovered;
+        lock {
+            // Re-check inside the lock: a concurrent publisher may have already
+            // populated (and possibly advanced) the counter while we were doing
+            // the FHIR GET. Never overwrite a higher in-memory counter with a
+            // stale recovered snapshot.
+            common:ClientEventState? raced = common:clientEventCounters[clientId];
+            if raced is common:ClientEventState {
+                return raced.clone();
+            }
+            common:clientEventCounters[clientId] = recovered;
+            log:printInfo(string `[EVENT STATE] Restored in-memory state for ${clientId} from FHIR server`);
+            return recovered.clone();
+        }
     }
 
     return ();

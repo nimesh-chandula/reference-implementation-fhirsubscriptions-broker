@@ -28,13 +28,14 @@ function handleFhirSubscriptionRequest(http:Request req, string? authorization) 
         };
     }
 
-    string|error clientId = auth:extractClientIdFromAccessToken(accessToken);
-    if clientId is error {
-        audit:auditTokenValidationFailure("unknown", "Subscription request: invalid client ID in token: " + clientId.message());
+    common:ValidatedSubscriptionToken|error validated = auth:validateSubscriptionAccessToken(accessToken);
+    if validated is error {
+        audit:auditTokenValidationFailure("unknown", "Subscription request: token validation failed: " + validated.message());
         return <http:BadRequest>{
-            body: {"error": "invalid_request", "error_description": clientId.message()}
+            body: {"error": "invalid_token", "error_description": validated.message()}
         };
     }
+    string clientId = validated.clientId;
 
     json|error payload = req.getJsonPayload();
     if payload is error || payload !is map<json> {
@@ -98,7 +99,7 @@ function handleFhirSubscriptionRequest(http:Request req, string? authorization) 
         };
     }
 
-    error? patientAccessResult = auth:validatePatientSubscriptionAccess(authorization, brokerScopedPatientId);
+    error? patientAccessResult = auth:validatePatientSubscriptionAccess(validated.claims, brokerScopedPatientId);
     if patientAccessResult is error {
         audit:auditSubscriptionCreated(clientId, brokerScopedPatientId, false, "Patient access denied: " + patientAccessResult.message());
         return <http:BadRequest>{

@@ -181,6 +181,7 @@ public type ValidatedSubscriptionToken record {|
     string subscriptionId;           // Subscription ID from token
     string patient;                  // Broker-scoped patient ID from token
     string[]? resourceTypes = ();    // Allowed resource types
+    map<json> claims = {};           // Verified token claims (JWKS-validated)
 |};
 
 // Authorization decision result from authz service

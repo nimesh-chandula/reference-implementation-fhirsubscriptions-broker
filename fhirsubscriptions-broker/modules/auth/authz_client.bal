@@ -43,48 +43,41 @@ public function checkAuthorization(map<json> jwtClaims, string? patientId) retur
     return {isAuthorized: result.isAuthorized, scope: scope};
 }
 
-// Validate patient-level access for subscription creation
-public function validatePatientSubscriptionAccess(string? authorization, string targetPatientId) returns error? {
-    if !requireNotificationAuthz || authorization is () {
+// Validate patient-level access for subscription creation.
+// Takes already JWKS-validated claims (from validateSubscriptionAccessToken)
+// instead of the raw Authorization header — never trust unverified payloads
+// for auth decisions.
+public function validatePatientSubscriptionAccess(map<json> validatedClaims, string targetPatientId) returns error? {
+    if !requireNotificationAuthz {
         return ();
     }
 
-    string|error tokenResult = extractBearerToken(authorization);
-    if tokenResult is error {
-        return tokenResult;
-    }
+    map<json> claims = validatedClaims;
 
-    json|error payload = decodeJWTPayload(tokenResult);
-    if payload is error {
-        return payload;
-    }
-
-    if payload is map<json> {
-        json? patientClaim = payload["patient"];
-        if patientClaim is () {
-            json? subClaim = payload["sub"];
-            if subClaim is string {
-                [string, string?]|error resolved = fhir:resolvePatientBySub(fhir:fhirServerClient, subClaim);
-                if resolved is [string, string?] {
-                    payload["patient"] = resolved[0];
-                    patientClaim = resolved[0];
-                    log:printInfo(string `[AUTHZ] Enriched JWT with patient=${resolved[0]} from FHIR lookup`);
-                } else {
-                    log:printWarn(string `[AUTHZ] Could not resolve patient from sub: ${resolved.message()}`);
-                }
+    json? patientClaim = claims["patient"];
+    if patientClaim is () {
+        json? subClaim = claims["sub"];
+        if subClaim is string {
+            [string, string?]|error resolved = fhir:resolvePatientBySub(fhir:fhirServerClient, subClaim);
+            if resolved is [string, string?] {
+                claims["patient"] = resolved[0];
+                patientClaim = resolved[0];
+                log:printInfo(string `[AUTHZ] Enriched JWT with patient=${resolved[0]} from FHIR lookup`);
+            } else {
+                log:printWarn(string `[AUTHZ] Could not resolve patient from sub: ${resolved.message()}`);
             }
         }
+    }
 
-        if patientClaim is string && patientClaim != targetPatientId {
-            log:printWarn(string `[AUTHZ] Patient mismatch: token patient=${patientClaim}, target=${targetPatientId}`);
-            return error(string `Cannot subscribe to another patient's data. Token patient=${patientClaim}, requested=${targetPatientId}`);
-        }
+    if patientClaim is string && patientClaim != targetPatientId {
+        log:printWarn(string `[AUTHZ] Patient mismatch: token patient=${patientClaim}, target=${targetPatientId}`);
+        return error(string `Cannot subscribe to another patient's data. Token patient=${patientClaim}, requested=${targetPatientId}`);
+    }
 
-        if authzEnabled {
-            common:AuthzResult authzResult = checkAuthorization(payload, targetPatientId);
-            if !authzResult.isAuthorized {
-                return error(string `Authorization denied for patient ${targetPatientId}`);
-            }
+    if authzEnabled {
+        common:AuthzResult authzResult = checkAuthorization(claims, targetPatientId);
+        if !authzResult.isAuthorized {
+            return error(string `Authorization denied for patient ${targetPatientId}`);
         }
     }
 

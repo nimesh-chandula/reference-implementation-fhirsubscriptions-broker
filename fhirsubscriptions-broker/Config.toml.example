@@ -116,3 +116,13 @@ allowHttpCallbacks = false
 # Optional: map FHIR identifier.system URIs to short system IDs for MPI lookup
 # [nimesh_chandula.broker.fhir.systemUriRegistry]
 # "http://hospital-h1.org/patient-ids" = "H001"
+
+# ============================================================================
+# WEBSUB HUB CLIENT (modules/websub)
+# ============================================================================
+[nimesh_chandula.broker.websub]
+
+# Disables TLS certificate verification when calling the WebSub hub.
+# MUST be false in production — only enable for local/dev hubs with self-signed
+# certs. With a plain http:// hub URL this flag has no effect.
+disableHubTlsVerification = false

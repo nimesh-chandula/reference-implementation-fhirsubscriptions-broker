@@ -105,7 +105,7 @@ service /broker on brokerListener {
         return subscribers;
     }
 
-    // Token endpoint - OAuth 2.0 Token Exchange & SMART Permission Tickets
+    // Token endpoint - OAuth 2.0 Token Exchange (RFC 8693) & Refresh Token
     resource function post auth/token(http:Request req) returns json|http:BadRequest|http:Unauthorized {
         log:printInfo("========== TOKEN REQUEST RECEIVED ==========");
 
@@ -129,9 +129,13 @@ service /broker on brokerListener {
             return tokens:processRefreshTokenRequest(req);
         }
 
-        log:printInfo("[TOKEN] Processing as SMART Permission Tickets request");
-        req.setTextPayload(formData, "application/x-www-form-urlencoded");
-        return tokens:processTokenRequest(req);
+        log:printError("[TOKEN] Unsupported grant_type — only token-exchange and refresh_token are accepted");
+        return <http:BadRequest>{
+            body: {
+                "error": "unsupported_grant_type",
+                "error_description": "grant_type must be 'urn:ietf:params:oauth:grant-type:token-exchange' or 'refresh_token'"
+            }
+        };
     }
 
     // Get clients subscribed to a broker-scoped patient ID
