@@ -12,7 +12,8 @@ RUN bal build
 
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
-COPY --from=build /src/target/bin/*.jar /app/service.jar
+COPY --from=build /src/target/bin/ /app/bin/
+RUN ln -s "$(ls /app/bin/*.jar | head -n1)" /app/service.jar
 ENV BAL_CONFIG_FILES=/app/Config.toml
 EXPOSE 9091
 ENTRYPOINT ["java","-jar","/app/service.jar"]

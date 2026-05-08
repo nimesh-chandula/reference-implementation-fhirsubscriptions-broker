@@ -3,13 +3,12 @@
 #   1) WebSubHub (existing compose at $WEBSUBHUB_DIR)
 #   2) FHIR server, Audit, CR, Broker (this repo's docker-compose.yml)
 #
-# Usage:  ./start.sh
-# Env:    WEBSUBHUB_DIR (default: ~/Documents/websubhub-deployment/docker/kafka)
+# Usage:  WEBSUBHUB_DIR=/path/to/websubhub/kafka ./start.sh
+# Env:    WEBSUBHUB_DIR (required) — path to the Kafka WebSubHub compose stack.
 
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WEBSUBHUB_DIR="${WEBSUBHUB_DIR:-$HOME/Documents/websubhub-deployment/docker/kafka}"
 
 log() { printf '\033[1;34m[start.sh]\033[0m %s\n' "$*"; }
 err() { printf '\033[1;31m[start.sh]\033[0m %s\n' "$*" >&2; }
@@ -23,6 +22,12 @@ if [[ ! -f "$HERE/broker/Config.toml" ]]; then
 fi
 
 # --- 2. Bring up WebSubHub (existing stack, untouched) ----------------------
+if [[ -z "${WEBSUBHUB_DIR:-}" ]]; then
+  err "WEBSUBHUB_DIR is not set."
+  err "Set it to the directory containing the Kafka WebSubHub docker-compose.yml, e.g.:"
+  err "    WEBSUBHUB_DIR=/path/to/websubhub-deployment/docker/kafka ./start.sh"
+  exit 1
+fi
 if [[ ! -d "$WEBSUBHUB_DIR" ]]; then
   err "WebSubHub directory not found: $WEBSUBHUB_DIR"
   err "Set WEBSUBHUB_DIR to the path containing docker-compose.yml for the Kafka WebSubHub stack."

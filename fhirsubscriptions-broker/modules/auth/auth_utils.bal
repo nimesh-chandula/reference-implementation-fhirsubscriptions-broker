@@ -16,7 +16,7 @@ public configurable map<common:ClientRegistration> clientRegistry = {};
 // Dynamic client registry for runtime-registered clients (via admin API).
 public map<common:ClientRegistration> dynamicClientRegistry = {};
 
-public configurable boolean requireNotificationAuthz = false;
+public configurable boolean requireNotificationAuthz = true;
 
 // ============================================================================
 // SUBSCRIPTION AUTHORIZATION ASGARDEO APP CONFIGURATION
@@ -27,7 +27,7 @@ configurable string subscriptionAuthzIssuer = "https://api.asgardeo.io/t/fhirbro
 // ============================================================================
 // AUTHORIZATION CONFIGURATION
 // ============================================================================
-public configurable boolean authzEnabled = false;
+public configurable boolean authzEnabled = true;
 
 // ============================================================================
 // ASGARDEO ID TOKEN VALIDATION (1st Asgardeo app)
@@ -118,10 +118,10 @@ public function validateAsgardeoIdToken(string idToken) returns common:Validated
             jwksConfig: {
                 url: asgardeoJwksUrl,
                 cacheConfig: {
-                    capacity: 10,
-                    evictionFactor: 0.25,
-                    evictionPolicy: "LRU",
-                    defaultMaxAge: 3600
+                    capacity: common:JWKS_CACHE_CAPACITY,
+                    evictionFactor: <float>common:JWKS_CACHE_EVICTION_FACTOR,
+                    evictionPolicy: common:JWKS_CACHE_EVICTION_POLICY,
+                    defaultMaxAge: <decimal>common:JWKS_CACHE_MAX_AGE
                 }
             }
         }
@@ -424,10 +424,11 @@ public function validateResourceAccess(string? authorization, string? expectedCl
 
     string|error tokenResult = extractBearerToken(authorization);
     if tokenResult is error {
+        log:printWarn(string `[AUTHZ] Bearer token extraction failed: ${tokenResult.message()}`);
         return <http:Unauthorized>{
             body: {
                 "error": "unauthorized",
-                "error_description": "Invalid Authorization header: " + tokenResult.message()
+                "error_description": "Invalid Authorization header"
             }
         };
     }

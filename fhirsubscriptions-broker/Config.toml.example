@@ -46,14 +46,18 @@ sourceObserverName = "fhir-notification-broker"
 # Expected audience for client assertions (MUST be HTTPS in production)
 tokenAudience = "https://<your-broker-host>/broker/auth/token"
 
-# Enforce token validation on notification retrieval and FHIR proxy endpoints
+# Enforce token validation on notification retrieval and FHIR proxy endpoints.
+# Defaults to true (secure-by-default). Uncomment below to disable for local/dev:
+# requireNotificationAuthz = false
 requireNotificationAuthz = true
 
 # Subscription authorization Asgardeo app — validates client access tokens
 subscriptionAuthzJwksUrl = "https://api.asgardeo.io/t/<your-tenant>/oauth2/jwks"
 subscriptionAuthzIssuer = "https://api.asgardeo.io/t/<your-tenant>/oauth2/token"
 
-# Patient-level access control (wso2/health.fhir.r4.authz)
+# Patient-level access control (wso2/health.fhir.r4.authz).
+# Defaults to true (secure-by-default). Uncomment below to disable for local/dev:
+# authzEnabled = false
 authzEnabled = true
 
 # 1st Asgardeo app — validates incoming ID tokens (token exchange)

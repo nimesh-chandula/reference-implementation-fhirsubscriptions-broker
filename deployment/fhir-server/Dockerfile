@@ -17,9 +17,10 @@ RUN git clone --depth=1 --branch ${GIT_REF} ${REPO_URL} repo \
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 ARG SUBDIR=miscellaneous/fhir-server
-COPY --from=build /src/repo/${SUBDIR}/target/bin/*.jar /app/service.jar
+COPY --from=build /src/repo/${SUBDIR}/target/bin/ /app/bin/
 COPY --from=build /src/repo/${SUBDIR}/Config.toml /app/Config.toml
-RUN mkdir -p /app/data
+RUN ln -s "$(ls /app/bin/*.jar | head -n1)" /app/service.jar \
+ && mkdir -p /app/data
 ENV BAL_CONFIG_FILES=/app/Config.toml
 EXPOSE 9090
 ENTRYPOINT ["java","-jar","/app/service.jar"]

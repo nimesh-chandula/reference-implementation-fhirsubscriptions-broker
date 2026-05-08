@@ -1,8 +1,8 @@
 # Docker bring-up
 
 One command boots the broker plus all four peer services (FHIR server, Client
-Registry, Audit, and the WebSubHub stack at
-`~/Documents/websubhub-deployment/docker/kafka/`).
+Registry, Audit, and an existing Kafka WebSubHub stack pointed at by
+`WEBSUBHUB_DIR`).
 
 ## Layout
 
@@ -57,7 +57,7 @@ Inside the `broker-net` compose network, services reach each other by name:
 
    ```bash
    cd deployment
-   ./start.sh
+   WEBSUBHUB_DIR=/path/to/websubhub-deployment/docker/kafka ./start.sh
    ```
 
    Builds are slow the first time (Ballerina pulls Central deps for each
@@ -65,9 +65,9 @@ Inside the `broker-net` compose network, services reach each other by name:
 
 ## Environment variables
 
-| Var            | Default                                                  | Purpose                                                         |
-| -------------- | -------------------------------------------------------- | --------------------------------------------------------------- |
-| `WEBSUBHUB_DIR`| `~/Documents/websubhub-deployment/docker/kafka`           | Path to the WebSubHub Kafka compose stack.                      |
+| Var            | Required | Purpose                                                         |
+| -------------- | -------- | --------------------------------------------------------------- |
+| `WEBSUBHUB_DIR`| yes      | Path to the directory containing the Kafka WebSubHub `docker-compose.yml`. |
 
 Build-time overrides (per-service `GIT_REF` build args) are set in
 `docker-compose.yml`; pin a different ref by editing that file.
@@ -95,6 +95,28 @@ docker compose -f "$WEBSUBHUB_DIR/docker-compose.yml" down
 ```
 
 Add `-v` to either to wipe volumes.
+
+## Network exposure (operator responsibility)
+
+Three broker GET endpoints are deliberately unauthenticated and are intended
+to be reachable only from an internal/private network:
+
+- `GET /broker/subscriptions/{brokerScopedPatientId}`
+- `GET /broker/clients/{brokerScopedPatientId}`
+- `GET /broker/registry`
+
+The Ballerina service does **not** enforce auth on these paths — the
+deployment must. When fronting this broker with any public ingress (Choreo
+gateway, Kubernetes ingress, reverse proxy, WAF), block external traffic to
+the three paths above. Note that `fhirsubscriptions-broker/.choreo/component.yaml`
+currently lists the `broker-api` endpoint as `networkVisibilities: [Public]`;
+operators are responsible for restricting these admin paths externally
+(e.g., via Choreo API Manager rules, an upstream reverse proxy, or a network
+policy that limits the listener to a private subnet).
+
+The bundled `docker-compose.yml` here exposes the broker on host port `9091`
+for local development only — it is not a production deployment and applies
+no path-level access control.
 
 ## Gotchas
 

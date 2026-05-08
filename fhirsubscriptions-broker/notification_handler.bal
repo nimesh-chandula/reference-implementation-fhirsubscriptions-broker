@@ -44,10 +44,10 @@ function handleNotificationRequest(json payload) returns http:Ok|http:BadRequest
 
             if result.brokerScopedPatientId is string {
                 resolvedPatients.push(result);
-                log:printInfo(string `[NOTIFICATION] Patient ${localRef} resolved to: ${<string>result.brokerScopedPatientId} (${result.status})`);
+                log:printDebug(string `[NOTIFICATION] Patient ${localRef} resolved to: ${<string>result.brokerScopedPatientId} (${result.status})`);
             } else {
                 failedPatients.push(result);
-                log:printWarn(string `[NOTIFICATION] Patient ${localRef} resolution failed: ${result.message ?: "unknown"}`);
+                log:printDebug(string `[NOTIFICATION] Patient ${localRef} resolution failed: ${result.message ?: "unknown"}`);
             }
         }
     }
@@ -64,7 +64,7 @@ function handleNotificationRequest(json payload) returns http:Ok|http:BadRequest
     foreach common:PatientResolutionResult resolution in resolvedPatients {
         string brokerScopedId = <string>resolution.brokerScopedPatientId;
 
-        log:printInfo(string `[NOTIFICATION] Querying group memberships for patient: ${brokerScopedId}`);
+        log:printDebug(string `[NOTIFICATION] Querying group memberships for patient: ${brokerScopedId}`);
 
         common:GroupMembershipResult[]|error groupResults = fhir:searchGroupsByPatient(fhir:fhirServerClient, brokerScopedId);
 
@@ -80,7 +80,7 @@ function handleNotificationRequest(json payload) returns http:Ok|http:BadRequest
         }
 
         if groupResults.length() == 0 {
-            log:printInfo(string `[NOTIFICATION] No group memberships found for patient: ${brokerScopedId}`);
+            log:printDebug(string `[NOTIFICATION] No group memberships found for patient: ${brokerScopedId}`);
             patientResults.push({
                 "localPatientRef": resolution.localPatientRef,
                 "brokerScopedPatientId": brokerScopedId,

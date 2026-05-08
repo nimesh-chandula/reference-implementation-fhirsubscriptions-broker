@@ -17,7 +17,8 @@ RUN git clone --depth=1 --branch ${GIT_REF} ${REPO_URL} repo \
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 ARG SUBDIR=miscellaneous/audit-service
-COPY --from=build /src/repo/${SUBDIR}/target/bin/*.jar /app/service.jar
-RUN mkdir -p /tmp/audit-logs
+COPY --from=build /src/repo/${SUBDIR}/target/bin/ /app/bin/
+RUN ln -s "$(ls /app/bin/*.jar | head -n1)" /app/service.jar \
+ && mkdir -p /tmp/audit-logs
 EXPOSE 9093
 ENTRYPOINT ["java","-jar","/app/service.jar"]

@@ -54,7 +54,7 @@ final http:CorsConfig corsConfig = {
     allowHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     exposeHeaders: ["Content-Type", "Authorization"],
-    maxAge: 84900
+    maxAge: 86400
 };
 
 // ============================================================================
@@ -91,7 +91,22 @@ service /broker on brokerListener {
         };
     }
 
-    // Get all subscriptions for a topic
+    // ------------------------------------------------------------------
+    // Internal-only admin endpoints (the next three GETs).
+    //
+    // The following three resources are intentionally unauthenticated and
+    // MUST be reachable only via an internal/private network. The deployment
+    // is responsible for blocking them from public traffic at the gateway,
+    // WAF, or network-policy layer — see deployment/README.md ("Network
+    // exposure"). Note: .choreo/component.yaml currently lists the broker-api
+    // endpoint as networkVisibilities: [Public]; operators fronting this
+    // broker with any public ingress must restrict these paths externally.
+    //
+    // The "system-admin" string passed to audit:auditDataAccess is a
+    // deliberate marker for an internal/system caller, not a placeholder.
+    // ------------------------------------------------------------------
+
+    // Get all subscriptions for a topic — internal-only (see block above).
     resource function get subscriptions/[string brokerScopedPatientId]() returns string[]|http:NotFound {
         string[]? subscribers = common:topicSubscribers[brokerScopedPatientId];
 
@@ -138,7 +153,7 @@ service /broker on brokerListener {
         };
     }
 
-    // Get clients subscribed to a broker-scoped patient ID
+    // Get clients subscribed to a broker-scoped patient ID — internal-only.
     resource function get clients/[string brokerScopedPatientId]() returns string[]|http:NotFound {
         string[]? clients = common:clientSubscriptions[brokerScopedPatientId];
 
@@ -152,7 +167,7 @@ service /broker on brokerListener {
         return clients;
     }
 
-    // List all registered clients
+    // List all registered clients — internal-only.
     resource function get registry() returns json {
         audit:auditDataAccess("system-admin", "registry-list", true);
         return handleListRegistry();
@@ -197,27 +212,44 @@ service /fhir on brokerListener {
 
     // Proxy resource retrieval to FHIR server (with authorization validation)
     resource function get [string resourceType]/[string resourceId](http:Request req, @http:Header string? authorization = ())
-        returns json|http:NotFound|http:Unauthorized|http:Forbidden|http:BadRequest|http:InternalServerError {
+        returns json|http:NotFound|http:Unauthorized|http:Forbidden|http:BadRequest|http:BadGateway|http:GatewayTimeout|http:InternalServerError {
         log:printInfo(string `[RESOURCE RETRIEVAL] GET /fhir/${resourceType}/${resourceId}`);
 
         common:ValidatedSubscriptionToken|http:Unauthorized|http:Forbidden authResult = auth:validateResourceAccess(authorization, ());
-        if authResult is http:Unauthorized {
-            audit:auditAuthzDecision("unknown", "", false, (), "Missing or invalid token on FHIR proxy");
+        if authResult !is common:ValidatedSubscriptionToken {
+            if authResult is http:Unauthorized {
+                audit:auditAuthzDecision("unknown", "", false, (), "Missing or invalid token on FHIR proxy");
+            } else {
+                audit:auditAuthzDecision("unknown", "", false, (), "Forbidden on FHIR proxy");
+            }
             return authResult;
         }
-        if authResult is http:Forbidden {
-            audit:auditAuthzDecision("unknown", "", false, (), "Forbidden on FHIR proxy");
-            return authResult;
-        }
+        string callerId = authResult.clientId;
+        string resourceRef = string `${resourceType}/${resourceId}`;
 
         string fhirPath = string `/${resourceType}/${resourceId}`;
         log:printInfo(string `[RESOURCE RETRIEVAL] Proxying to FHIR server: ${fhirPath}`);
 
-        json|error result = fhir:fhirServerClient->get(fhirPath);
+        // Inspect upstream response so transport, 4xx, and 5xx errors get
+        // mapped to distinct broker statuses instead of all collapsing to 404.
+        http:Response|error response = fhir:fhirServerClient->get(fhirPath);
+        if response is error {
+            log:printError(string `[RESOURCE RETRIEVAL] FHIR server transport error: ${response.message()}`);
+            audit:auditDataAccess(callerId, resourceRef, false, "transport: " + response.message());
+            string msg = response.message().toLowerAscii();
+            if msg.includes("timeout") || msg.includes("timed out") {
+                return <http:GatewayTimeout>{
+                    body: buildOperationOutcome("timeout", "Upstream FHIR server timed out")
+                };
+            }
+            return <http:BadGateway>{
+                body: buildOperationOutcome("transient", "Upstream FHIR server unreachable")
+            };
+        }
 
-        if result is error {
-            log:printError(string `[RESOURCE RETRIEVAL] FHIR server error: ${result.message()}`);
-            audit:auditDataAccess("fhir-proxy", string `${resourceType}/${resourceId}`, false, result.message());
+        int statusCode = response.statusCode;
+        if statusCode == 404 {
+            audit:auditDataAccess(callerId, resourceRef, false, "upstream 404");
             return <http:NotFound>{
                 body: {
                     "resourceType": "OperationOutcome",
@@ -229,53 +261,136 @@ service /fhir on brokerListener {
                 }
             };
         }
+        if statusCode == 401 {
+            audit:auditDataAccess(callerId, resourceRef, false, "upstream 401");
+            return <http:Unauthorized>{
+                body: buildOperationOutcome("login", "Upstream FHIR server rejected the request as unauthenticated")
+            };
+        }
+        if statusCode == 403 {
+            audit:auditDataAccess(callerId, resourceRef, false, "upstream 403");
+            return <http:Forbidden>{
+                body: buildOperationOutcome("forbidden", "Upstream FHIR server forbade the request")
+            };
+        }
+        if statusCode >= 500 {
+            audit:auditDataAccess(callerId, resourceRef, false, string `upstream ${statusCode}`);
+            return <http:BadGateway>{
+                body: buildOperationOutcome("transient", string `Upstream FHIR server returned ${statusCode}`)
+            };
+        }
+        if statusCode < 200 || statusCode >= 300 {
+            audit:auditDataAccess(callerId, resourceRef, false, string `upstream ${statusCode}`);
+            return <http:BadGateway>{
+                body: buildOperationOutcome("transient", string `Upstream FHIR server returned unexpected status ${statusCode}`)
+            };
+        }
 
-        // Patient-level authorization check via authz service
-        if auth:requireNotificationAuthz && auth:authzEnabled && authorization is string && result is map<json> {
-            string|error tokenStr = auth:extractBearerToken(authorization);
-            if tokenStr is string {
-                json|error payload = auth:decodeJWTPayload(tokenStr);
-                if payload is map<json> {
-                    json? existingPatient = payload["patient"];
-                    if existingPatient is () {
-                        json? subClaim = payload["sub"];
-                        if subClaim is string {
-                            [string, string?]|error resolved = fhir:resolvePatientBySub(fhir:fhirServerClient, subClaim);
-                            if resolved is [string, string?] {
-                                payload["patient"] = resolved[0];
-                                log:printInfo(string `[RESOURCE RETRIEVAL] Enriched JWT with patient=${resolved[0]} from FHIR lookup`);
-                            } else {
-                                log:printWarn(string `[RESOURCE RETRIEVAL] Could not resolve patient from sub: ${resolved.message()}`);
-                            }
-                        }
-                    }
+        json|error body = response.getJsonPayload();
+        if body is error {
+            log:printError(string `[RESOURCE RETRIEVAL] Failed to parse upstream JSON: ${body.message()}`);
+            audit:auditDataAccess(callerId, resourceRef, false, "invalid upstream JSON");
+            return <http:BadGateway>{
+                body: buildOperationOutcome("structure", "Upstream FHIR server returned an invalid JSON payload")
+            };
+        }
+        json result = body;
 
-                    string? resourcePatientId = auth:extractPatientFromResource(result);
-                    if resourcePatientId is string {
-                        common:AuthzResult authzResult = auth:checkAuthorization(payload, resourcePatientId);
-                        string validatedClientId = authResult is common:ValidatedSubscriptionToken ? authResult.clientId : "unknown";
-                        if !authzResult.isAuthorized {
-                            log:printWarn(string `[RESOURCE RETRIEVAL] Authorization denied for patient=${resourcePatientId}`);
-                            audit:auditAuthzDecision(validatedClientId, resourcePatientId, false, authzResult.scope, "Patient-level access denied");
-                            return <http:Forbidden>{
-                                body: {
-                                    "resourceType": "OperationOutcome",
-                                    "issue": [{
-                                        "severity": "error",
-                                        "code": "forbidden",
-                                        "diagnostics": "You are not authorized to access this patient's resources"
-                                    }]
-                                }
-                            };
-                        }
-                        audit:auditAuthzDecision(validatedClientId, resourcePatientId, true, authzResult.scope);
-                    }
-                }
+        // Patient-level authorization check via authz service.
+        // Fail-closed: when both gates are on, every failure path below
+        // audits the denial and returns a non-2xx response — no falling
+        // through to a 200 with the resource body.
+        if auth:requireNotificationAuthz && auth:authzEnabled && authorization is string {
+            if result !is map<json> {
+                log:printWarn("[RESOURCE RETRIEVAL] Resource is not a JSON object — denying");
+                audit:auditAuthzDecision(callerId, "", false, (), "resource not inspectable");
+                return <http:Forbidden>{
+                    body: buildOperationOutcome("forbidden", "Resource cannot be evaluated for patient-level authorization")
+                };
             }
+            map<json> resourceMap = result;
+
+            string|error tokenStr = auth:extractBearerToken(authorization);
+            if tokenStr is error {
+                log:printWarn(string `[RESOURCE RETRIEVAL] Bearer token malformed: ${tokenStr.message()}`);
+                audit:auditAuthzDecision(callerId, "", false, (), "bearer token malformed");
+                return <http:Unauthorized>{
+                    body: buildOperationOutcome("login", "Authorization header is malformed")
+                };
+            }
+
+            json|error payloadJson = auth:decodeJWTPayload(tokenStr);
+            if payloadJson !is map<json> {
+                log:printWarn("[RESOURCE RETRIEVAL] JWT payload could not be decoded as JSON object");
+                audit:auditAuthzDecision(callerId, "", false, (), "jwt payload invalid");
+                return <http:Unauthorized>{
+                    body: buildOperationOutcome("login", "JWT payload could not be decoded")
+                };
+            }
+            map<json> payload = payloadJson;
+
+            json? existingPatient = payload["patient"];
+            if existingPatient is () {
+                json? subClaim = payload["sub"];
+                if subClaim !is string {
+                    log:printWarn("[RESOURCE RETRIEVAL] No patient claim and no sub claim — cannot resolve patient context");
+                    audit:auditAuthzDecision(callerId, "", false, (), "could not resolve patient context");
+                    return <http:Forbidden>{
+                        body: buildOperationOutcome("forbidden", "Patient context could not be resolved from token")
+                    };
+                }
+                [string, string?]|error resolved = fhir:resolvePatientBySub(fhir:fhirServerClient, subClaim);
+                if resolved is error {
+                    log:printWarn(string `[RESOURCE RETRIEVAL] Could not resolve patient from sub: ${resolved.message()}`);
+                    audit:auditAuthzDecision(callerId, "", false, (), "could not resolve patient context");
+                    return <http:Forbidden>{
+                        body: buildOperationOutcome("forbidden", "Patient context could not be resolved from token")
+                    };
+                }
+                payload["patient"] = resolved[0];
+                log:printInfo(string `[RESOURCE RETRIEVAL] Enriched JWT with patient=${resolved[0]} from FHIR lookup`);
+            }
+
+            string? resourcePatientId = auth:extractPatientFromResource(resourceMap);
+            if resourcePatientId is () {
+                log:printWarn("[RESOURCE RETRIEVAL] Resource has no patient reference — denying");
+                audit:auditAuthzDecision(callerId, "", false, (), "resource has no patient reference");
+                return <http:Forbidden>{
+                    body: buildOperationOutcome("forbidden", "Resource has no patient reference for authorization")
+                };
+            }
+
+            common:AuthzResult authzResult = auth:checkAuthorization(payload, resourcePatientId);
+            if !authzResult.isAuthorized {
+                log:printWarn(string `[RESOURCE RETRIEVAL] Authorization denied for patient=${resourcePatientId}`);
+                audit:auditAuthzDecision(callerId, resourcePatientId, false, authzResult.scope, "Patient-level access denied");
+                return <http:Forbidden>{
+                    body: {
+                        "resourceType": "OperationOutcome",
+                        "issue": [{
+                            "severity": "error",
+                            "code": "forbidden",
+                            "diagnostics": "You are not authorized to access this patient's resources"
+                        }]
+                    }
+                };
+            }
+            audit:auditAuthzDecision(callerId, resourcePatientId, true, authzResult.scope);
         }
 
         log:printInfo(string `[RESOURCE RETRIEVAL] Returning resource from FHIR server`);
-        audit:auditDataAccess("fhir-proxy", string `${resourceType}/${resourceId}`, true);
+        audit:auditDataAccess(callerId, resourceRef, true);
         return result;
     }
+}
+
+isolated function buildOperationOutcome(string code, string diagnostics) returns map<json> {
+    return {
+        "resourceType": "OperationOutcome",
+        "issue": [{
+            "severity": "error",
+            "code": code,
+            "diagnostics": diagnostics
+        }]
+    };
 }
