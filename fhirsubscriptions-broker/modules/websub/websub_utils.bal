@@ -5,8 +5,8 @@ import ballerina/log;
 import ballerina/time;
 import ballerina/uuid;
 
-import nimesh_chandula/broker.audit;
-import nimesh_chandula/broker.common;
+import wso2healthcare/broker.audit;
+import wso2healthcare/broker.common;
 
 // Disables TLS certificate verification for the WebSub hub client. Defaults to
 // false so HTTPS hubs are verified; only set to true for local/dev hubs with

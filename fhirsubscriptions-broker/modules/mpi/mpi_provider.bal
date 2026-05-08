@@ -2,7 +2,7 @@
 // All MPI operations are routed to the OpenHIE Client Registry (CR) provider.
 // To add an alternative provider, reintroduce a dispatch switch here.
 
-import nimesh_chandula/broker.common;
+import wso2healthcare/broker.common;
 
 // Resolve hospital-scoped patient ID to broker-scoped patient ID
 public function resolveToBrokerScopedId(string systemId, string systemPatientId) returns string|error {

@@ -1,0 +1,70 @@
+name: fhir-broker-stack
+
+networks:
+  broker-net:
+    driver: bridge
+
+services:
+  fhir-server:
+    build:
+      context: ./fhir-server
+      args:
+        GIT_REF: main
+    image: fhir-broker-stack/fhir-server:local
+    container_name: fhir-server
+    networks: [broker-net]
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  audit:
+    build:
+      context: ./audit
+      args:
+        GIT_REF: main
+    image: fhir-broker-stack/audit:local
+    container_name: audit
+    networks: [broker-net]
+    ports:
+      - "9098:9093"
+    restart: unless-stopped
+
+  cr:
+    build:
+      context: ./cr
+      args:
+        GIT_REF: integration-iol-cr
+    image: fhir-broker-stack/cr:local
+    container_name: cr
+    networks: [broker-net]
+    ports:
+      - "9093:9093"
+    depends_on:
+      - audit
+      - fhir-server
+    volumes:
+      - ./cr/Config.toml:/app/Config.toml:ro
+      - cr-data:/app/data
+    restart: unless-stopped
+
+  broker:
+    build:
+      context: ..
+      dockerfile: deployment/broker/Dockerfile
+    image: fhir-broker-stack/broker:local
+    container_name: broker
+    networks: [broker-net]
+    ports:
+      - "9091:9091"
+    depends_on:
+      - fhir-server
+      - cr
+      - audit
+    extra_hosts:
+      - "dev.websubhub.com:host-gateway"
+    volumes:
+      - ./broker/Config.toml:/app/Config.toml:ro
+    restart: unless-stopped
+
+volumes:
+  cr-data:

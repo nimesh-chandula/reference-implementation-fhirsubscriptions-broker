@@ -7,8 +7,8 @@ import ballerina/lang.'array;
 import ballerina/jwt;
 import ballerina/log;
 
-import nimesh_chandula/broker.common;
-import nimesh_chandula/broker.fhir;
+import wso2healthcare/broker.common;
+import wso2healthcare/broker.fhir;
 
 // Static client registry, retained for the /broker/registry admin endpoints.
 public configurable map<common:ClientRegistration> clientRegistry = {};

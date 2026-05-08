@@ -1,0 +1,76 @@
+# FHIR Notification Broker — Docker compose template.
+# Copy to Config.toml and fill in Asgardeo credentials.
+#
+# Hostnames below resolve via the broker-net compose network. The WebSubHub
+# host (dev.websubhub.com) is reached through extra_hosts: host-gateway, which
+# routes the broker container to the docker host where the WebSubHub stack's
+# NGINX is bound on 127.0.0.1:8443.
+
+brokerPort = 9091
+webSubHubUrl = "https://dev.websubhub.com:8443/hub"
+
+# allowedCorsOrigins = ["http://localhost:3000"]
+
+# ============================================================================
+# AUDIT
+# ============================================================================
+[wso2healthcare.broker.audit]
+auditServiceUrl = "http://audit:9093"
+auditEnabled = true
+sourceObserverName = "fhir-notification-broker"
+
+# ============================================================================
+# AUTH
+# ============================================================================
+[wso2healthcare.broker.auth]
+tokenAudience = "http://localhost:9091/broker/auth/token"
+
+requireNotificationAuthz = true
+
+# Asgardeo App 2 (subscription authorization) — fill in
+subscriptionAuthzJwksUrl = "https://api.asgardeo.io/t/<your-tenant>/oauth2/jwks"
+subscriptionAuthzIssuer  = "https://api.asgardeo.io/t/<your-tenant>/oauth2/token"
+
+authzEnabled = true
+
+# Asgardeo App 1 (token exchange ID-token validation) — fill in
+asgardeoJwksUrl     = "https://api.asgardeo.io/t/<your-tenant>/oauth2/jwks"
+asgardeoIssuer      = "https://api.asgardeo.io/t/<your-tenant>/oauth2/token"
+asgardeoUserInfoUrl = "https://api.asgardeo.io/t/<your-tenant>/oauth2/userinfo"
+
+# Optional registered client apps:
+# [wso2healthcare.broker.auth.clientRegistry.my-app]
+# issuer = "https://my-app.example.com"
+# jwksUri = "https://my-app.example.com/.well-known/jwks.json"
+# allowedScopes = ["system/Subscription.crud", "system/Patient.read"]
+
+# ============================================================================
+# TOKENS (Asgardeo App 1 token exchange)
+# ============================================================================
+[wso2healthcare.broker.tokens]
+asgardeoTokenExchangeUrl          = "https://api.asgardeo.io/t/<your-tenant>/oauth2/token"
+asgardeoTokenExchangeClientId     = ""
+asgardeoTokenExchangeClientSecret = ""
+asgardeoTokenExchangeScopes       = "system/Subscription.crud system/Patient.read"
+tokenExchangeDefaultScopes        = "system/Subscription.crud system/Patient.read"
+
+# ============================================================================
+# MPI / Client Registry
+# ============================================================================
+[wso2healthcare.broker.mpi]
+crServiceUrl = "http://cr:9093/fhir/r4"
+crAuthToken  = ""
+
+# ============================================================================
+# FHIR server
+# ============================================================================
+[wso2healthcare.broker.fhir]
+fhirServerUrl       = "http://fhir-server:9090/fhir/r4"
+brokerBaseUrl       = "http://localhost:9091/fhir"
+allowHttpCallbacks  = true   # local dev only — set false in production
+
+# ============================================================================
+# WebSub
+# ============================================================================
+[wso2healthcare.broker.websub]
+disableHubTlsVerification = true   # WebSubHub uses a self-signed cert in local dev

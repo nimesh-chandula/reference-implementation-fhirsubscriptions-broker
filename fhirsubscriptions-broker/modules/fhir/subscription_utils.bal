@@ -4,8 +4,8 @@ import ballerina/http;
 import ballerina/log;
 import ballerina/time;
 
-import nimesh_chandula/broker.common;
-import nimesh_chandula/broker.websub;
+import wso2healthcare/broker.common;
+import wso2healthcare/broker.websub;
 
 // Allow HTTP callback endpoints for Subscription.channel.endpoint.
 // Public so root handlers can validate callback URLs against this flag.

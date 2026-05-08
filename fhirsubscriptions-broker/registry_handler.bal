@@ -3,9 +3,9 @@
 import ballerina/http;
 import ballerina/log;
 
-import nimesh_chandula/broker.audit;
-import nimesh_chandula/broker.auth;
-import nimesh_chandula/broker.common;
+import wso2healthcare/broker.audit;
+import wso2healthcare/broker.auth;
+import wso2healthcare/broker.common;
 
 // List all registered clients (both static from Config.toml and dynamic)
 function handleListRegistry() returns json {

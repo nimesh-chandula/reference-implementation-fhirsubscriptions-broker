@@ -3,10 +3,10 @@
 import ballerina/http;
 import ballerina/log;
 
-import nimesh_chandula/broker.audit;
-import nimesh_chandula/broker.auth;
-import nimesh_chandula/broker.common;
-import nimesh_chandula/broker.fhir;
+import wso2healthcare/broker.audit;
+import wso2healthcare/broker.auth;
+import wso2healthcare/broker.common;
+import wso2healthcare/broker.fhir;
 
 // Grant type constants for token exchange
 const string TOKEN_EXCHANGE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:token-exchange";

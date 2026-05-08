@@ -4,8 +4,8 @@
 import ballerina/http;
 import ballerina/log;
 
-import nimesh_chandula/broker.audit;
-import nimesh_chandula/broker.common;
+import wso2healthcare/broker.audit;
+import wso2healthcare/broker.common;
 
 // ============================================================================
 // FHIR SERVER CLIENT

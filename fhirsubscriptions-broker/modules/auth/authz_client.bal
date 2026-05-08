@@ -6,8 +6,8 @@ import ballerina/log;
 import ballerinax/health.fhir.r4;
 import ballerinax/health.fhir.r4.authz;
 
-import nimesh_chandula/broker.common;
-import nimesh_chandula/broker.fhir;
+import wso2healthcare/broker.common;
+import wso2healthcare/broker.fhir;
 
 // Check authorization via the prebuilt authz-fhirr4-service
 public function checkAuthorization(map<json> jwtClaims, string? patientId) returns common:AuthzResult {

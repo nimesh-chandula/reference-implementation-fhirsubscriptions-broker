@@ -21,11 +21,11 @@
 import ballerina/http;
 import ballerina/log;
 
-import nimesh_chandula/broker.audit;
-import nimesh_chandula/broker.auth;
-import nimesh_chandula/broker.common;
-import nimesh_chandula/broker.fhir;
-import nimesh_chandula/broker.tokens;
+import wso2healthcare/broker.audit;
+import wso2healthcare/broker.auth;
+import wso2healthcare/broker.common;
+import wso2healthcare/broker.fhir;
+import wso2healthcare/broker.tokens;
 
 // Configurable port for the broker service
 configurable int brokerPort = 9090;

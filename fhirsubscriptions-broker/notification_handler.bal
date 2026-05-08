@@ -3,10 +3,10 @@
 import ballerina/http;
 import ballerina/log;
 
-import nimesh_chandula/broker.audit;
-import nimesh_chandula/broker.common;
-import nimesh_chandula/broker.fhir;
-import nimesh_chandula/broker.mpi;
+import wso2healthcare/broker.audit;
+import wso2healthcare/broker.common;
+import wso2healthcare/broker.fhir;
+import wso2healthcare/broker.mpi;
 
 // Handle incoming FHIR notification bundle
 function handleNotificationRequest(json payload) returns http:Ok|http:BadRequest|http:InternalServerError {

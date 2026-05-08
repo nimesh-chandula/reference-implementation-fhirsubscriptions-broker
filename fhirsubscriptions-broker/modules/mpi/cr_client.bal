@@ -5,9 +5,9 @@
 import ballerina/http;
 import ballerina/log;
 
-import nimesh_chandula/broker.audit;
-import nimesh_chandula/broker.common;
-import nimesh_chandula/broker.fhir;
+import wso2healthcare/broker.audit;
+import wso2healthcare/broker.common;
+import wso2healthcare/broker.fhir;
 
 // Configurable CR service URL and auth token
 configurable string crServiceUrl = "http://localhost:9093/fhir/r4";

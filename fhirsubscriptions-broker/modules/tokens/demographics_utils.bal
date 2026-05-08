@@ -3,9 +3,9 @@
 import ballerina/log;
 import ballerina/time;
 
-import nimesh_chandula/broker.common;
-import nimesh_chandula/broker.fhir;
-import nimesh_chandula/broker.mpi;
+import wso2healthcare/broker.common;
+import wso2healthcare/broker.fhir;
+import wso2healthcare/broker.mpi;
 
 // Resolve or create patient in MPI (used by the token exchange flow)
 function resolveOrCreatePatient(common:ClientDemographics demographics, string systemId) returns string|error {

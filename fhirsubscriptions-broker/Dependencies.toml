@@ -380,7 +380,7 @@ modules = [
 ]
 
 [[package]]
-org = "nimesh_chandula"
+org = "wso2healthcare"
 name = "broker"
 version = "0.1.0"
 dependencies = [
@@ -396,13 +396,13 @@ dependencies = [
 	{org = "ballerinax", name = "health.fhir.r4.international401"}
 ]
 modules = [
-	{org = "nimesh_chandula", packageName = "broker", moduleName = "broker"},
-	{org = "nimesh_chandula", packageName = "broker", moduleName = "broker.audit"},
-	{org = "nimesh_chandula", packageName = "broker", moduleName = "broker.auth"},
-	{org = "nimesh_chandula", packageName = "broker", moduleName = "broker.common"},
-	{org = "nimesh_chandula", packageName = "broker", moduleName = "broker.fhir"},
-	{org = "nimesh_chandula", packageName = "broker", moduleName = "broker.mpi"},
-	{org = "nimesh_chandula", packageName = "broker", moduleName = "broker.tokens"},
-	{org = "nimesh_chandula", packageName = "broker", moduleName = "broker.websub"}
+	{org = "wso2healthcare", packageName = "broker", moduleName = "broker"},
+	{org = "wso2healthcare", packageName = "broker", moduleName = "broker.audit"},
+	{org = "wso2healthcare", packageName = "broker", moduleName = "broker.auth"},
+	{org = "wso2healthcare", packageName = "broker", moduleName = "broker.common"},
+	{org = "wso2healthcare", packageName = "broker", moduleName = "broker.fhir"},
+	{org = "wso2healthcare", packageName = "broker", moduleName = "broker.mpi"},
+	{org = "wso2healthcare", packageName = "broker", moduleName = "broker.tokens"},
+	{org = "wso2healthcare", packageName = "broker", moduleName = "broker.websub"}
 ]
 

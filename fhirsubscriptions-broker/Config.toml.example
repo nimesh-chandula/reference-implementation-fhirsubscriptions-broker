@@ -4,7 +4,7 @@
 # Config.toml is gitignored — never commit real secrets.
 #
 # Submodule layout: keys for a configurable declared in modules/<name>/ live
-# under [nimesh_chandula.broker.<name>]. Top-level keys belong to main.bal.
+# under [wso2healthcare.broker.<name>]. Top-level keys belong to main.bal.
 #
 # Override any value via environment variable using Ballerina's configurable
 # mechanism (BAL_CONFIG_FILES or BAL_CONFIG_DATA).
@@ -31,7 +31,7 @@ webSubHubUrl = "https://<your-websubhub-host>/hub"
 # ============================================================================
 # AUDIT (modules/audit)
 # ============================================================================
-[nimesh_chandula.broker.audit]
+[wso2healthcare.broker.audit]
 auditServiceUrl = "https://<your-audit-host>"
 auditEnabled = true
 sourceObserverName = "fhir-notification-broker"
@@ -41,17 +41,10 @@ sourceObserverName = "fhir-notification-broker"
 # Stores: client assertion validation, subscription token signing,
 # Asgardeo ID-token validation, patient-level authz.
 # ============================================================================
-[nimesh_chandula.broker.auth]
+[wso2healthcare.broker.auth]
 
 # Expected audience for client assertions (MUST be HTTPS in production)
 tokenAudience = "https://<your-broker-host>/broker/auth/token"
-
-# Subscription token signing keys (RSA-SHA256).
-# Generate keys: openssl genpkey -algorithm RSA -out resources/broker-private.key -pkeyopt rsa_keygen_bits:2048
-#                openssl req -new -x509 -key resources/broker-private.key -out resources/broker-public.crt -days 3650 -subj "/CN=fhir-broker"
-subscriptionTokenPrivateKeyPath = "/etc/choreo-secrets/broker-private.key"
-subscriptionTokenCertPath = "/etc/choreo-secrets/broker-public.crt"
-subscriptionTokenIssuer = "https://<your-broker-host>"
 
 # Enforce token validation on notification retrieval and FHIR proxy endpoints
 requireNotificationAuthz = true
@@ -74,7 +67,7 @@ asgardeoUserInfoUrl = "https://api.asgardeo.io/t/<your-tenant>/oauth2/userinfo"
 #   allowedScopes — list of SMART scopes this client may request
 #
 # Example:
-# [nimesh_chandula.broker.auth.clientRegistry.my-app]
+# [wso2healthcare.broker.auth.clientRegistry.my-app]
 # issuer = "https://my-app.example.com"
 # jwksUri = "https://my-app.example.com/.well-known/jwks.json"
 # allowedScopes = ["system/Subscription.crud", "system/Patient.read", "system/Encounter.read"]
@@ -83,7 +76,7 @@ asgardeoUserInfoUrl = "https://api.asgardeo.io/t/<your-tenant>/oauth2/userinfo"
 # TOKEN ENDPOINT & 2ND ASGARDEO APP TOKEN EXCHANGE (modules/tokens)
 # Broker exchanges 1st app's ID token for a signed access token from this app.
 # ============================================================================
-[nimesh_chandula.broker.tokens]
+[wso2healthcare.broker.tokens]
 asgardeoTokenExchangeUrl = "https://api.asgardeo.io/t/<your-tenant>/oauth2/token"
 # Set via environment variable or secrets manager — never commit real values
 asgardeoTokenExchangeClientId = ""
@@ -94,7 +87,7 @@ tokenExchangeDefaultScopes = "system/Subscription.crud system/Patient.read"
 # ============================================================================
 # CLIENT REGISTRY / MPI (modules/mpi)
 # ============================================================================
-[nimesh_chandula.broker.mpi]
+[wso2healthcare.broker.mpi]
 crServiceUrl = "https://<your-cr-host>/fhir/r4"
 # Set via environment variable or secrets manager — never commit real values
 crAuthToken = ""
@@ -103,7 +96,7 @@ crAuthToken = ""
 # FHIR SERVER (modules/fhir)
 # Owns the FHIR HTTP client used by every module that talks to FHIR.
 # ============================================================================
-[nimesh_chandula.broker.fhir]
+[wso2healthcare.broker.fhir]
 fhirServerUrl = "http://<your-fhir-host>/fhir/r4"
 
 # Broker base URL used in FHIR resource references
@@ -114,13 +107,13 @@ brokerBaseUrl = "https://<your-broker-host>/fhir"
 allowHttpCallbacks = false
 
 # Optional: map FHIR identifier.system URIs to short system IDs for MPI lookup
-# [nimesh_chandula.broker.fhir.systemUriRegistry]
+# [wso2healthcare.broker.fhir.systemUriRegistry]
 # "http://hospital-h1.org/patient-ids" = "H001"
 
 # ============================================================================
 # WEBSUB HUB CLIENT (modules/websub)
 # ============================================================================
-[nimesh_chandula.broker.websub]
+[wso2healthcare.broker.websub]
 
 # Disables TLS certificate verification when calling the WebSub hub.
 # MUST be false in production — only enable for local/dev hubs with self-signed

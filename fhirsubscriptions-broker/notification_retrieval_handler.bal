@@ -6,10 +6,10 @@ import ballerina/http;
 import ballerina/log;
 import ballerina/time;
 
-import nimesh_chandula/broker.audit;
-import nimesh_chandula/broker.auth;
-import nimesh_chandula/broker.common;
-import nimesh_chandula/broker.fhir;
+import wso2healthcare/broker.audit;
+import wso2healthcare/broker.auth;
+import wso2healthcare/broker.common;
+import wso2healthcare/broker.fhir;
 
 // FHIR R5 $events operation handler with pagination
 function handleEventsOperation(

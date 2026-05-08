@@ -31,48 +31,25 @@ up each of them.
    - [Client Registry / MPI](#43-client-registry--mpi)
    - [Audit service](#44-audit-service)
    - [Asgardeo (identity provider)](#45-asgardeo-identity-provider)
-   - [Subscription token signing keys](#46-subscription-token-signing-keys)
 5. [Broker configuration](#5-broker-configuration)
 6. [Build and run](#6-build-and-run)
 7. [Deploying to Choreo](#7-deploying-to-choreo)
 8. [API surface](#8-api-surface)
-9. [Verifying the deployment](#9-verifying-the-deployment)
-10. [Troubleshooting](#10-troubleshooting)
+9. [Troubleshooting](#9-troubleshooting)
 
 ---
 
 ## 1. System overview
 
-```
-   Source HIEs / Hospitals                  Patient-facing app
-            |                                       |
-            | FHIR Bundle                  ID token / client assertion
-            v                                       v
-   +------------------+                  +----------------------+
-   |  Notification    |                  |  /broker/auth/token  |
-   |  /broker/        |                  |  (token exchange)    |
-   |  notification    |                  +----------+-----------+
-   +--------+---------+                             |
-            |                                       |
-            v                                       v
-   +-------------------------------------------------------+
-   |                  FHIR Notification Broker             |
-   |                                                       |
-   |  Identity   Subscriptions   Notification   Tokens     |
-   |  resolve     manage         routing        issue      |
-   +---+---------------+----------------+----------------+-+
-       |               |                |                |
-       v               v                v                v
-   +--------+    +-----------+    +-----------+    +---------+
-   |  CR/   |    |   FHIR    |    |  WebSub   |    | Audit   |
-   |  MPI   |    |  server   |    |   Hub     |    | service |
-   +--------+    +-----------+    +-----------+    +---------+
-                                       |
-                                       v
-                                Subscriber callbacks
-```
+Source systems POST FHIR notification bundles to the broker, which resolves
+patient identity through the Client Registry (MPI), persists clinical
+resources to a FHIR R4 server, and fans out `SubscriptionStatus` notifications
+through a WebSub hub to subscribed client callback URLs. Patient-facing apps
+authenticate through Asgardeo and exchange ID tokens for broker-scoped access
+tokens. Every operation emits a FHIR `AuditEvent` to a peer
+audit service.
 
-The broker depends on four external services and one identity provider:
+The broker depends on four external services and two identity-provider applications:
 
 | Service | Role |
 |---------|------|
@@ -80,7 +57,8 @@ The broker depends on four external services and one identity provider:
 | WebSub hub | Pub/sub fan-out of notifications to client callback URLs |
 | Client Registry (CR) | FHIR-backed Master Patient Index — resolves source-system patient IDs to broker-scoped IDs |
 | Audit service | FHIR `AuditEvent` sink for security/compliance logging |
-| Asgardeo | OAuth 2.0 / OIDC identity provider — supplies ID tokens for token exchange and access tokens for client authorization |
+| Asgardeo App 1 | OIDC IdP standing in for an IAL2 identity verification service — issues ID tokens to the patient-facing app for the broker's token-exchange (RFC 8693) flow |
+| Asgardeo App 2 | OAuth 2.0 token issuer for API clients — mints the access tokens that authorize calls to `/fhir/Subscription` and notification-retrieval endpoints |
 
 These peer services are deployed separately. Sections 4.1 – 4.5 cover the
 recommended choices and how to wire each one into the broker config.
@@ -93,8 +71,6 @@ recommended choices and how to wire each one into the broker config.
 |------|---------|---------|
 | [Ballerina](https://ballerina.io/downloads/) | 2201.12.11 (Swan Lake Update 12) | Build & run the broker |
 | Java | 21+ | Ballerina runtime |
-| OpenSSL | any recent | Generate token-signing keys |
-| `curl` / Postman | — | Smoke tests |
 | Asgardeo tenant | free tier works | Identity provider |
 
 ---
@@ -104,6 +80,15 @@ recommended choices and how to wire each one into the broker config.
 ```
 reference-implementation-fhirsubscriptions-broker/   (this repo)
 ├── README.md                          # you are here
+├── LICENSE
+├── deployment/                        # Docker bring-up for the full stack
+│   ├── docker-compose.yml
+│   ├── start.sh
+│   ├── README.md
+│   ├── fhir-server/Dockerfile
+│   ├── cr/{Dockerfile, Config.toml}
+│   ├── audit/Dockerfile
+│   └── broker/{Dockerfile, Config.toml.example}
 └── fhirsubscriptions-broker/          # Ballerina package
     ├── Ballerina.toml
     ├── Config.toml.example            # config template (copy to Config.toml)
@@ -119,10 +104,10 @@ reference-implementation-fhirsubscriptions-broker/   (this repo)
     │   ├── common/                    # shared types, in-memory state
     │   ├── fhir/                      # FHIR client + Subscription/Group helpers
     │   ├── mpi/                       # CR/MPI client (resolve, $match, register)
-    │   ├── tokens/                    # SMART permission tickets, RFC 8693 exchange
+    │   ├── tokens/                    # Token exchange via Asgardeo
     │   └── websub/                    # hub registration & publishing
     ├── openapi/broker-api.yaml        # OpenAPI 3.0 spec
-    ├── resources/                     # local-dev TLS + signing keys (gitignored)
+    ├── resources/                     # local-dev TLS keys (gitignored)
     └── .choreo/component.yaml         # Choreo deployment manifest
 ```
 
@@ -140,26 +125,18 @@ stack — substitute equivalents if you have them.
 ### 4.1 FHIR R4 server
 
 The broker stores FHIR resources (Subscription, Group, Communication, plus
-clinical resources tagged per client) here.
-
-**Option A — WSO2 Open Healthcare FHIR Server**:
+clinical resources tagged per client) here. We use the WSO2 Open Healthcare
+FHIR server.
 
 ```bash
 git clone https://github.com/wso2/open-healthcare-prebuilt-services
-cd open-healthcare-prebuilt-services/fhir-server
+cd open-healthcare-prebuilt-services/miscellaneous/fhir-server
 bal run
 ```
 
 Default URL: `http://localhost:9090/fhir/r4`
 
-**Option B — HAPI FHIR JPA Server** (Docker):
-
-```bash
-docker run -p 8080:8080 hapiproject/hapi:latest
-# URL: http://localhost:8080/fhir
-```
-
-Set the resulting URL into `nimesh_chandula.broker.fhir.fhirServerUrl`.
+Set the resulting URL into `wso2healthcare.broker.fhir.fhirServerUrl`.
 
 ### 4.2 WebSub hub
 
@@ -191,8 +168,8 @@ The Client Registry holds the FHIR-backed Master Patient Index. It exposes:
 Any FHIR R4 server with `$match` support can play this role.
 
 Set:
-- `nimesh_chandula.broker.mpi.crServiceUrl` — base URL ending in `/fhir/r4`
-- `nimesh_chandula.broker.mpi.crAuthToken` — bearer token if the CR is protected
+- `wso2healthcare.broker.mpi.crServiceUrl` — base URL ending in `/fhir/r4`
+- `wso2healthcare.broker.mpi.crAuthToken` — bearer token if the CR is protected
 
 ### 4.4 Audit service
 
@@ -202,7 +179,7 @@ expected at `auditServiceUrl`. Any HTTP service that accepts a FHIR
 
 Default URL when run locally: `http://localhost:9098`.
 
-Set `nimesh_chandula.broker.audit.auditServiceUrl` to its base URL, and toggle
+Set `wso2healthcare.broker.audit.auditServiceUrl` to its base URL, and toggle
 `auditEnabled = true` once it is reachable. Until then, leave `auditEnabled
 = false` so failed audit posts don't show up as warnings.
 
@@ -250,31 +227,6 @@ subscriptionAuthzIssuer  = "https://api.asgardeo.io/t/<tenant>/oauth2/token"
 > Asgardeo stands in here for a production-grade IAL2 identity verification
 > provider. The protocol (OIDC + RFC 8693) is unchanged if you swap it.
 
-### 4.6 Subscription token signing keys
-
-The broker mints its own signed JWTs (RS256) for clients after token exchange.
-Generate the key pair once (run from inside `fhirsubscriptions-broker/`):
-
-```bash
-openssl genpkey -algorithm RSA \
-  -out resources/broker-private.key -pkeyopt rsa_keygen_bits:2048
-
-openssl req -new -x509 \
-  -key resources/broker-private.key \
-  -out resources/broker-public.crt \
-  -days 3650 -subj "/CN=fhir-broker"
-```
-
-Map the paths into broker config:
-```
-subscriptionTokenPrivateKeyPath = "resources/broker-private.key"
-subscriptionTokenCertPath       = "resources/broker-public.crt"
-subscriptionTokenIssuer         = "https://<your-broker-host>"
-```
-
-In Choreo, upload both as **file secrets** and point the paths at
-`/etc/choreo-secrets/broker-private.key` and `.../broker-public.crt`.
-
 ---
 
 ## 5. Broker configuration
@@ -290,7 +242,7 @@ cp Config.toml.example Config.toml
 
 ### Configuration hierarchy
 
-Submodule keys live under `[nimesh_chandula.broker.<module>]`. Top-level keys
+Submodule keys live under `[wso2healthcare.broker.<module>]`. Top-level keys
 belong to `main.bal`. You can override any value with environment variables
 via Ballerina's [configurable mechanism](https://ballerina.io/learn/by-example/configurable-variables/)
 using `BAL_CONFIG_FILES` or `BAL_CONFIG_DATA`.
@@ -305,9 +257,6 @@ using `BAL_CONFIG_FILES` or `BAL_CONFIG_DATA`.
 | `allowedCorsOrigins` | top-level | Browser origins allowed to call the broker |
 | `auditServiceUrl`, `auditEnabled` | `audit` | Audit service base URL + toggle |
 | `tokenAudience` | `auth` | Expected `aud` claim in client assertions |
-| `subscriptionTokenPrivateKeyPath` | `auth` | RSA key path for signing |
-| `subscriptionTokenCertPath` | `auth` | RSA cert path |
-| `subscriptionTokenIssuer` | `auth` | `iss` claim broker stamps on its tokens |
 | `requireNotificationAuthz` | `auth` | Enforce token validation on retrieval/proxy endpoints |
 | `subscriptionAuthzJwksUrl` | `auth` | JWKS for client access tokens (Asgardeo App 2) |
 | `subscriptionAuthzIssuer` | `auth` | Expected issuer for client access tokens |
@@ -328,10 +277,10 @@ using `BAL_CONFIG_FILES` or `BAL_CONFIG_DATA`.
 ### Client registry entries
 
 Each backend client app authenticating with a JWT client assertion needs an
-entry under `[nimesh_chandula.broker.auth.clientRegistry.<name>]`:
+entry under `[wso2healthcare.broker.auth.clientRegistry.<name>]`:
 
 ```toml
-[nimesh_chandula.broker.auth.clientRegistry.my-app]
+[wso2healthcare.broker.auth.clientRegistry.my-app]
 issuer = "https://my-app.example.com"
 jwksUri = "https://my-app.example.com/.well-known/jwks.json"
 allowedScopes = [
@@ -349,7 +298,7 @@ entry here — they authenticate via Asgardeo, not a client assertion.
 Maps source-system FHIR `identifier.system` URIs to short MPI system IDs:
 
 ```toml
-[nimesh_chandula.broker.fhir.systemUriRegistry]
+[wso2healthcare.broker.fhir.systemUriRegistry]
 "http://hospital-h1.org/patient-ids" = "H001"
 "http://hospital-h2.org/patient-ids" = "H002"
 ```
@@ -408,15 +357,12 @@ pinning the `/broker` and `/fhir` base paths.
 4. **Configs and Secrets**: paste your `Config.toml` block, with secrets
    (Asgardeo client secret, CR auth token) attached as separate Choreo
    Secrets that the build references.
-5. **File secrets**: upload `broker-private.key` and `broker-public.crt` to
-   `/etc/choreo-secrets/`. Update the paths in config to match.
-6. **TLS**: leave `tlsCertPath` and `tlsKeyPath` unset — Choreo's gateway
+5. **TLS**: leave `tlsCertPath` and `tlsKeyPath` unset — Choreo's gateway
    terminates TLS upstream.
-7. **Endpoint**: expose the `/broker` and `/fhir` base paths.
-8. After first deploy, copy the issued URL into:
+6. **Endpoint**: expose the `/broker` and `/fhir` base paths.
+7. After first deploy, copy the issued URL into:
    - `tokenAudience`
    - `brokerBaseUrl`
-   - `subscriptionTokenIssuer`
    - `allowedCorsOrigins`
 
 Repeat the Choreo deployment process separately for the audit service, FHIR
@@ -465,47 +411,16 @@ Full spec: [`fhirsubscriptions-broker/openapi/broker-api.yaml`](fhirsubscription
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/broker/subscribe` | Subscribe a callback URL to a topic (testing) |
 | GET | `/broker/subscriptions/{patientId}` | List callback URLs for a patient |
 | GET | `/broker/clients/{patientId}` | List client IDs subscribed to a patient |
 
 ---
 
-## 9. Verifying the deployment
-
-### Smoke test — register a client
-
-```bash
-curl -X POST http://localhost:9091/broker/registry/register \
-  -H "Content-Type: application/json" \
-  -d '{
-        "name": "test-app",
-        "issuer": "https://test-app.example.com",
-        "jwksUri": "https://test-app.example.com/.well-known/jwks.json",
-        "allowedScopes": ["system/Subscription.crud", "system/Patient.read"]
-      }'
-```
-
-### Smoke test — POST a notification bundle
-
-Drop a FHIR Bundle containing a `Patient` and one or more clinical resources
-to `/broker/notification`. The response summarizes how many patients were
-resolved and how many notifications fanned out.
-
-### Smoke test — observe a fan-out
-
-1. Create a Subscription via `POST /fhir/Subscription` (with a bearer token
-   from Asgardeo App 2) pointing at any HTTP echo service as the callback.
-2. POST a notification matching that patient.
-3. Watch the echo service receive a `SubscriptionStatus` ping.
-
----
-
-## 10. Troubleshooting
+## 9. Troubleshooting
 
 | Symptom | Likely cause |
 |---------|--------------|
-| `error: configurable variable ... is not set` | Missing key in `Config.toml`, or the section header is wrong (must be `[nimesh_chandula.broker.<module>]`) |
+| `error: configurable variable ... is not set` | Missing key in `Config.toml`, or the section header is wrong (must be `[wso2healthcare.broker.<module>]`) |
 | `Connection refused` to FHIR server | FHIR server not running, or `fhirServerUrl` host/port is wrong |
 | `401 Unauthorized` on `/fhir/Subscription` | Bearer token issuer/JWKS doesn't match `subscriptionAuthzIssuer`/`subscriptionAuthzJwksUrl` |
 | `401` from token exchange | Asgardeo App 1 client ID/secret wrong, or wrong tenant in URLs |
@@ -513,12 +428,6 @@ resolved and how many notifications fanned out.
 | MPI returns "patient not found" repeatedly | `crServiceUrl` wrong, or source system URI not in `systemUriRegistry` |
 | Audit warnings on every request | `auditEnabled = true` but audit service unreachable — set `false` or fix the URL |
 | Browser CORS errors | Frontend origin not in `allowedCorsOrigins` |
-
-For deeper diagnosis enable verbose logging and inspect:
-
-```bash
-bal run -- --b7a.log.level=DEBUG
-```
 
 ---
 

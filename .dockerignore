@@ -1,0 +1,11 @@
+.git
+.github
+.idea
+.vscode
+**/target/
+**/node_modules/
+**/.DS_Store
+
+# Local secrets / dev-only artifacts that should never enter an image
+deployment/broker/Config.toml
+fhirsubscriptions-broker/Config.toml

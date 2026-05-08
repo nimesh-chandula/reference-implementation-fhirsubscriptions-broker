@@ -3,7 +3,7 @@
 
 import ballerina/log;
 
-import nimesh_chandula/broker.common;
+import wso2healthcare/broker.common;
 
 // ============================================================================
 // CONFIGURABLE SYSTEM URI REGISTRY

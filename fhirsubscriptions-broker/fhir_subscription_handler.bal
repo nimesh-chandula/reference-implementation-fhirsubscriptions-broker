@@ -3,11 +3,11 @@
 import ballerina/http;
 import ballerina/log;
 
-import nimesh_chandula/broker.audit;
-import nimesh_chandula/broker.auth;
-import nimesh_chandula/broker.common;
-import nimesh_chandula/broker.fhir;
-import nimesh_chandula/broker.websub;
+import wso2healthcare/broker.audit;
+import wso2healthcare/broker.auth;
+import wso2healthcare/broker.common;
+import wso2healthcare/broker.fhir;
+import wso2healthcare/broker.websub;
 
 // Handle FHIR Subscription creation request
 function handleFhirSubscriptionRequest(http:Request req, string? authorization) returns json|http:BadRequest|http:InternalServerError {

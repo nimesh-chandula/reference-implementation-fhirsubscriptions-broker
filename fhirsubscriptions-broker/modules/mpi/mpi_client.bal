@@ -3,9 +3,9 @@
 
 import ballerina/log;
 
-import nimesh_chandula/broker.audit;
-import nimesh_chandula/broker.common;
-import nimesh_chandula/broker.fhir;
+import wso2healthcare/broker.audit;
+import wso2healthcare/broker.common;
+import wso2healthcare/broker.fhir;
 
 // ============================================================================
 // FULL PATIENT RESOLUTION CHAIN
