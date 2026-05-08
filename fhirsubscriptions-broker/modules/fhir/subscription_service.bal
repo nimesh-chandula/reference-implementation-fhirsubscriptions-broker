@@ -443,10 +443,17 @@ public function getOrCreateClientSubscription(
             log:printInfo(string `[CLIENT SUB] Found existing subscription: ${cachedSubId}`);
             map<json> updated = mergeResourceTypeCriteria(existing, clientId, resourceTypes);
             map<string|string[]> fhirHeaders = {"Content-Type": "application/fhir+json"};
-            http:Response _ = check fhirClient->/Subscription/[cachedSubId].put(updated, fhirHeaders);
-            log:printInfo(string `[CLIENT SUB] Updated subscription with merged criteria: ${cachedSubId}`);
-            audit:auditFhirServerOperation("subscription-update", string `Subscription/${cachedSubId}`, true);
-            return cachedSubId;
+            http:Response putResponse = check fhirClient->/Subscription/[cachedSubId].put(updated, fhirHeaders);
+            if putResponse.statusCode >= 200 && putResponse.statusCode < 300 {
+                log:printInfo(string `[CLIENT SUB] Updated subscription with merged criteria: ${cachedSubId}`);
+                audit:auditFhirServerOperation("subscription-update", string `Subscription/${cachedSubId}`, true);
+                return cachedSubId;
+            }
+            string|error body = putResponse.getTextPayload();
+            string reason = body is string ? body : "unknown";
+            log:printWarn(string `[CLIENT SUB] Subscription update failed (${putResponse.statusCode}): ${reason}`);
+            audit:auditFhirServerOperation("subscription-update", string `Subscription/${cachedSubId}`, false, reason);
+            return error(string `Subscription update failed for ${cachedSubId} (status: ${putResponse.statusCode})`);
         }
         log:printInfo(string `[CLIENT SUB] Cached subscription ${cachedSubId} no longer exists, creating new`);
     } else {
@@ -455,13 +462,20 @@ public function getOrCreateClientSubscription(
             log:printInfo(string `[CLIENT SUB] Subscription already exists on FHIR server: ${clientId}`);
             map<json> updated = mergeResourceTypeCriteria(existing, clientId, resourceTypes);
             map<string|string[]> fhirHeaders = {"Content-Type": "application/fhir+json"};
-            http:Response _ = check fhirClient->/Subscription/[clientId].put(updated, fhirHeaders);
-            log:printInfo(string `[CLIENT SUB] Updated subscription with merged criteria: ${clientId}`);
-            audit:auditFhirServerOperation("subscription-update", string `Subscription/${clientId}`, true);
-            lock {
-                common:clientSubscriptionIds[clientId] = clientId;
+            http:Response putResponse = check fhirClient->/Subscription/[clientId].put(updated, fhirHeaders);
+            if putResponse.statusCode >= 200 && putResponse.statusCode < 300 {
+                log:printInfo(string `[CLIENT SUB] Updated subscription with merged criteria: ${clientId}`);
+                audit:auditFhirServerOperation("subscription-update", string `Subscription/${clientId}`, true);
+                lock {
+                    common:clientSubscriptionIds[clientId] = clientId;
+                }
+                return clientId;
             }
-            return clientId;
+            string|error body = putResponse.getTextPayload();
+            string reason = body is string ? body : "unknown";
+            log:printWarn(string `[CLIENT SUB] Subscription update failed (${putResponse.statusCode}): ${reason}`);
+            audit:auditFhirServerOperation("subscription-update", string `Subscription/${clientId}`, false, reason);
+            return error(string `Subscription update failed for ${clientId} (status: ${putResponse.statusCode})`);
         }
     }
 

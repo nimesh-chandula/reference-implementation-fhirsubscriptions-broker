@@ -3,6 +3,7 @@
 import ballerina/http;
 import ballerina/log;
 import ballerina/time;
+import ballerina/uuid;
 
 import nimesh_chandula/broker.audit;
 import nimesh_chandula/broker.common;
@@ -68,9 +69,10 @@ public function subscribeToWebSubHub(string topicId, string callbackUrl, string?
 
     http:Client hubClient = check buildHubClient(webSubHubUrl);
 
-    string secret = (sharedSecret is string && sharedSecret.trim() != "") ? sharedSecret : common:DEFAULT_WEBSUB_SECRET;
+    string secret = (sharedSecret is string && sharedSecret.trim() != "") ? sharedSecret : uuid:createType4AsString();
     string body = string `hub.mode=subscribe&hub.topic=${common:urlEncode(topicId)}&hub.callback=${common:urlEncode(callbackUrl)}&hub.secret=${common:urlEncode(secret)}`;
-    log:printInfo(string `[WEBSUB SUBSCRIBE] Request body: ${body}`);
+    string redactedBody = string `hub.mode=subscribe&hub.topic=${common:urlEncode(topicId)}&hub.callback=${common:urlEncode(callbackUrl)}&hub.secret=[REDACTED]`;
+    log:printInfo(string `[WEBSUB SUBSCRIBE] Request body: ${redactedBody}`);
 
     http:Response|error responseResult = hubClient->post("", body, headers = {
         "Content-Type": "application/x-www-form-urlencoded"
@@ -127,7 +129,15 @@ public function publishToWebSubHub(string topicId, SubscriptionNotificationBundl
         }
     }
 
-    http:Response response = check hubClient->post(hubUrl, bundle, headers = requestHeaders);
+    http:Response|error responseResult = hubClient->post(hubUrl, bundle, headers = requestHeaders);
+
+    if responseResult is error {
+        log:printError(string `[WEBSUB PUBLISH] Failed: ${responseResult.message()}`, responseResult);
+        audit:auditWebSubOperation("topic-publish", topicId, false, responseResult.message());
+        return error(string `Failed to publish notification: ${responseResult.message()}`);
+    }
+
+    http:Response response = responseResult;
 
     if response.statusCode != 200 && response.statusCode != 202 && response.statusCode != 204 {
         audit:auditWebSubOperation("topic-publish", topicId, false, string `Hub returned status: ${response.statusCode}`);

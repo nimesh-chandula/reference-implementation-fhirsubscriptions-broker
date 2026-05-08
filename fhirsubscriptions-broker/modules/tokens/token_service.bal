@@ -16,6 +16,9 @@ const string REFRESH_TOKEN_GRANT_TYPE = "refresh_token";
 // Default scopes granted on token issuance
 configurable string tokenExchangeDefaultScopes = "system/Subscription.crud system/Patient.read";
 
+// FHIR Identifier system used to namespace patient IDs sourced from the Asgardeo identity registry.
+configurable string asgardeoUserSystemId = "https://asgardeo.io/users";
+
 // Process OAuth 2.0 Token Exchange request (RFC 8693)
 public function processTokenExchangeRequest(http:Request req) returns json|http:BadRequest|http:Unauthorized {
     log:printInfo("========== TOKEN EXCHANGE REQUEST ==========");
@@ -72,7 +75,7 @@ public function processTokenExchangeRequest(http:Request req) returns json|http:
     if validationResult is error {
         log:printError("[TOKEN EXCHANGE] ID token validation failed", validationResult);
         audit:auditTokenIssue("unknown", false, "ID token validation failed: " + validationResult.message());
-        return createInvalidTokenResponse(validationResult.message());
+        return createInvalidTokenResponse("Invalid or expired token");
     }
 
     log:printInfo(string `[TOKEN EXCHANGE] ID token validated for subject: ${validationResult.subject}`);
@@ -110,9 +113,10 @@ public function processTokenExchangeRequest(http:Request req) returns json|http:
             "Demographics not available. Configure Asgardeo to include family_name, given_name, and birthdate claims in ID token, or provide demographics parameter.");
     }
 
-    log:printInfo(string `[TOKEN EXCHANGE] Using demographics: ${demographics.family}, DOB: ${demographics.birthDate}`);
+    string birthYear = demographics.birthDate.length() >= 4 ? demographics.birthDate.substring(0, 4) : "****";
+    log:printInfo(string `[TOKEN EXCHANGE] Using demographics: familyPresent=true, givenCount=${demographics.given.length()}, birthYear=${birthYear}`);
 
-    string|error resolveResult = resolveOrCreatePatient(demographics, "https://asgardeo.io/users");
+    string|error resolveResult = resolveOrCreatePatient(demographics, asgardeoUserSystemId);
     if resolveResult is error {
         audit:auditTokenIssue(validationResult.subject, false, "Token exchange: failed to resolve patient: " + resolveResult.message());
         return createTokenExchangeErrorResponse("server_error", "Failed to create patient record");
@@ -222,7 +226,7 @@ public function processTokenExchangeRequest(http:Request req) returns json|http:
         response["refresh_token"] = refreshToken;
     }
 
-    log:printInfo(string `[TOKEN EXCHANGE] Asgardeo token issued: patient=${brokerScopedPatientId}, subject=${validationResult.subject}`);
+    log:printInfo(string `[TOKEN EXCHANGE] Asgardeo token issued: patient=${brokerScopedPatientId}`);
     log:printInfo("===============================================");
 
     audit:auditTokenIssue(clientId, true);
@@ -231,7 +235,7 @@ public function processTokenExchangeRequest(http:Request req) returns json|http:
 
 // Check if the request is a token exchange request
 public function isTokenExchangeRequest(string formData) returns boolean {
-    log:printInfo(string `[TOKEN ROUTING] Form data received: ${formData.substring(0, formData.length() < 200 ? formData.length() : 200)}...`);
+    log:printInfo(string `[TOKEN ROUTING] Form data received (length=${formData.length()})`);
 
     string? grantType = common:extractFormParameter(formData, "grant_type");
     log:printInfo(string `[TOKEN ROUTING] Extracted grant_type: ${grantType ?: "null"}`);

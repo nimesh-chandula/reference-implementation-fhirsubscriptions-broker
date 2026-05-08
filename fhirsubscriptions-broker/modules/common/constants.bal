@@ -16,11 +16,6 @@ public const decimal JWT_CLOCK_SKEW = 60;
 public const int SUBSCRIPTION_TOKEN_EXPIRY_SECONDS = 86400; // 24 hours
 public const string SUBSCRIPTION_TOKEN_HEADER = "X-Subscription-Token";
 
-// Default secret sent to WebSubHub when the client provides no shared secret.
-// The WSO2 WebSubHub admin.bal performs an unchecked <string> cast on hub.secret,
-// so a non-nil value must always be included to prevent a TypeCastError.
-public const string DEFAULT_WEBSUB_SECRET = "default-broker-secret";
-
 // Basic resource for persistent event counter state
 // ID format: state-{clientId}, stores current sequence number
 public const string EVENT_STATE_SYSTEM = "https://broker.example.org/codes";

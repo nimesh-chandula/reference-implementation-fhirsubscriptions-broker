@@ -230,7 +230,8 @@ public function extractDemographicsFromIdToken(map<json> tokenClaims) returns co
         gender: gender
     };
 
-    log:printInfo(string `[TOKEN EXCHANGE] Demographics extracted from ID token: ${demographics.family}, ${demographics.given.toString()}, DOB: ${demographics.birthDate}`);
+    string birthYear = demographics.birthDate.length() >= 4 ? demographics.birthDate.substring(0, 4) : "****";
+    log:printInfo(string `[TOKEN EXCHANGE] Demographics extracted from ID token: givenCount=${demographics.given.length()}, familyPresent=true, birthYear=${birthYear}`);
 
     return demographics;
 }
@@ -294,7 +295,8 @@ public function parseDemographicsFromJson(string demographicsJson) returns commo
         gender: genderJson is string ? genderJson : ()
     };
 
-    log:printInfo(string `[TOKEN EXCHANGE] Parsed demographics: ${demographics.family}, ${demographics.given.toString()}, DOB: ${demographics.birthDate}`);
+    string birthYear2 = demographics.birthDate.length() >= 4 ? demographics.birthDate.substring(0, 4) : "****";
+    log:printInfo(string `[TOKEN EXCHANGE] Parsed demographics: givenCount=${demographics.given.length()}, familyPresent=true, birthYear=${birthYear2}`);
 
     return demographics;
 }
@@ -436,7 +438,7 @@ public function validateResourceAccess(string? authorization, string? expectedCl
         return <http:Unauthorized>{
             body: {
                 "error": "invalid_token",
-                "error_description": "Token validation failed: " + validationResult.message()
+                "error_description": "Token validation failed"
             }
         };
     }
