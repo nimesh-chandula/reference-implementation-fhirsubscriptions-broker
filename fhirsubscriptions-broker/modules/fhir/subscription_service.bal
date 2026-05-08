@@ -65,15 +65,32 @@ public function createSubscriptionInFhirServer(http:Client fhirClient, json subs
     return error("Could not extract subscription ID from response");
 }
 
-// Get a Subscription resource from the FHIR server by ID
-public function getSubscriptionFromFhirServer(http:Client fhirClient, string subscriptionId) returns json|error {
+// Get a Subscription resource from the FHIR server by ID.
+// Returns the resource on 2xx, () on 404 (NotFound), or an error for any other failure.
+public function getSubscriptionFromFhirServer(http:Client fhirClient, string subscriptionId) returns map<json>?|error {
     log:printInfo(string `[SUBSCRIPTION_SERVICE] Retrieving subscription: ${subscriptionId}`);
 
     map<string|string[]> headers = {"Accept": "application/fhir+json"};
-    json response = check fhirClient->/Subscription/[subscriptionId].get(headers);
-    log:printInfo(string `[SUBSCRIPTION_SERVICE] Retrieved subscription: ${subscriptionId}`);
+    http:Response response = check fhirClient->/Subscription/[subscriptionId].get(headers);
 
-    return response;
+    if response.statusCode >= 200 && response.statusCode < 300 {
+        json payload = check response.getJsonPayload();
+        if payload !is map<json> {
+            return error(string `Subscription/${subscriptionId} response is not a JSON object`);
+        }
+        log:printInfo(string `[SUBSCRIPTION_SERVICE] Retrieved subscription: ${subscriptionId}`);
+        return payload;
+    }
+
+    if response.statusCode == 404 {
+        log:printInfo(string `[SUBSCRIPTION_SERVICE] Subscription/${subscriptionId} not found (404)`);
+        return ();
+    }
+
+    string|error body = response.getTextPayload();
+    string reason = body is string ? body : "unknown";
+    log:printWarn(string `[SUBSCRIPTION_SERVICE] Subscription/${subscriptionId} GET returned ${response.statusCode}: ${reason}`);
+    return error(string `Subscription GET failed for ${subscriptionId} (status: ${response.statusCode}): ${reason}`);
 }
 
 // ============================================================================
@@ -105,27 +122,52 @@ public function ensurePatientInFhirServer(http:Client fhirClient, string brokerS
     map<string|string[]> headers = {"Content-Type": "application/fhir+json"};
     http:Response|error getResponse = fhirClient->/Patient/[brokerScopedPatientId].get();
 
-    if getResponse is http:Response && getResponse.statusCode >= 200 && getResponse.statusCode < 300 {
-        http:Response putResponse = check fhirClient->/Patient/[brokerScopedPatientId].put(patientResource, headers);
-        if putResponse.statusCode >= 200 && putResponse.statusCode < 300 {
-            log:printInfo(string `[FHIR PATIENT SYNC] Patient/${brokerScopedPatientId} updated (status: ${putResponse.statusCode})`);
-            audit:auditFhirServerOperation("patient-update", string `Patient/${brokerScopedPatientId}`, true);
-        } else {
-            string|error body = putResponse.getTextPayload();
-            log:printWarn(string `[FHIR PATIENT SYNC] Patient update returned ${putResponse.statusCode}: ${body is string ? body : "unknown"}`);
-            audit:auditFhirServerOperation("patient-update", string `Patient/${brokerScopedPatientId}`, false, body is string ? body : "unknown");
-        }
-    } else {
-        http:Response postResponse = check fhirClient->/Patient.post(patientResource, headers);
-        if postResponse.statusCode >= 200 && postResponse.statusCode < 300 {
-            log:printInfo(string `[FHIR PATIENT SYNC] Patient/${brokerScopedPatientId} created (status: ${postResponse.statusCode})`);
-            audit:auditFhirServerOperation("patient-create", string `Patient/${brokerScopedPatientId}`, true);
-        } else {
-            string|error body = postResponse.getTextPayload();
-            log:printWarn(string `[FHIR PATIENT SYNC] Patient create returned ${postResponse.statusCode}: ${body is string ? body : "unknown"}`);
-            audit:auditFhirServerOperation("patient-create", string `Patient/${brokerScopedPatientId}`, false, body is string ? body : "unknown");
-        }
+    if getResponse is error {
+        audit:auditFhirServerOperation("patient-sync", string `Patient/${brokerScopedPatientId}`, false, getResponse.message());
+        return error(string `Patient GET failed for Patient/${brokerScopedPatientId}: ${getResponse.message()}`);
     }
+
+    if getResponse.statusCode >= 200 && getResponse.statusCode < 300 {
+        http:Response|error putResponse = fhirClient->/Patient/[brokerScopedPatientId].put(patientResource, headers);
+        if putResponse is error {
+            audit:auditFhirServerOperation("patient-update", string `Patient/${brokerScopedPatientId}`, false, putResponse.message());
+            return error(string `Patient update failed for Patient/${brokerScopedPatientId}: ${putResponse.message()}`);
+        }
+        if putResponse.statusCode < 200 || putResponse.statusCode >= 300 {
+            string|error body = putResponse.getTextPayload();
+            string reason = body is string ? body : "unknown";
+            log:printWarn(string `[FHIR PATIENT SYNC] Patient update returned ${putResponse.statusCode}: ${reason}`);
+            audit:auditFhirServerOperation("patient-update", string `Patient/${brokerScopedPatientId}`, false, reason);
+            return error(string `Patient update failed (status: ${putResponse.statusCode}): ${reason}`);
+        }
+        log:printInfo(string `[FHIR PATIENT SYNC] Patient/${brokerScopedPatientId} updated (status: ${putResponse.statusCode})`);
+        audit:auditFhirServerOperation("patient-update", string `Patient/${brokerScopedPatientId}`, true);
+        return;
+    }
+
+    if getResponse.statusCode == 404 {
+        http:Response|error postResponse = fhirClient->/Patient.post(patientResource, headers);
+        if postResponse is error {
+            audit:auditFhirServerOperation("patient-create", string `Patient/${brokerScopedPatientId}`, false, postResponse.message());
+            return error(string `Patient create failed for Patient/${brokerScopedPatientId}: ${postResponse.message()}`);
+        }
+        if postResponse.statusCode < 200 || postResponse.statusCode >= 300 {
+            string|error body = postResponse.getTextPayload();
+            string reason = body is string ? body : "unknown";
+            log:printWarn(string `[FHIR PATIENT SYNC] Patient create returned ${postResponse.statusCode}: ${reason}`);
+            audit:auditFhirServerOperation("patient-create", string `Patient/${brokerScopedPatientId}`, false, reason);
+            return error(string `Patient create failed (status: ${postResponse.statusCode}): ${reason}`);
+        }
+        log:printInfo(string `[FHIR PATIENT SYNC] Patient/${brokerScopedPatientId} created (status: ${postResponse.statusCode})`);
+        audit:auditFhirServerOperation("patient-create", string `Patient/${brokerScopedPatientId}`, true);
+        return;
+    }
+
+    string|error body = getResponse.getTextPayload();
+    string reason = body is string ? body : "unknown";
+    log:printWarn(string `[FHIR PATIENT SYNC] Patient GET returned ${getResponse.statusCode}: ${reason}`);
+    audit:auditFhirServerOperation("patient-sync", string `Patient/${brokerScopedPatientId}`, false, reason);
+    return error(string `Patient GET failed (status: ${getResponse.statusCode}): ${reason}`);
 }
 
 // Add or update Asgardeo sub and client app ID identifiers on a Patient resource
@@ -167,8 +209,10 @@ public function addIdentifiersToPatient(http:Client fhirClient, string brokerSco
         audit:auditFhirServerOperation("patient-identifier-update", string `Patient/${brokerScopedPatientId}`, true);
     } else {
         string|error body = putResponse.getTextPayload();
-        log:printWarn(string `[FHIR IDENTIFIERS] PUT failed (${putResponse.statusCode}): ${body is string ? body : "unknown"}`);
+        string reason = body is string ? body : "unknown";
+        log:printWarn(string `[FHIR IDENTIFIERS] PUT failed (${putResponse.statusCode}): ${reason}`);
         audit:auditFhirServerOperation("patient-identifier-update", string `Patient/${brokerScopedPatientId}`, false);
+        return error(string `Patient identifier update failed (status: ${putResponse.statusCode}): ${reason}`);
     }
 }
 
@@ -326,52 +370,99 @@ public function getOrCreateResourceGroup(http:Client fhirClient, string clientId
     return error(string `Failed to create Group/${groupId}: ${body is string ? body : "unknown"}`);
 }
 
-// Add a patient to a FHIR Group (idempotent)
+// Add a patient to a FHIR Group (idempotent, with optimistic-concurrency retry).
+// Concurrent token-exchange flows for the same client/resourceType race on the same Group.
+// Capture the version (ETag, falling back to meta.versionId), PUT with If-Match, and on
+// 412/409 re-fetch and retry — the existing patientRef dedupe doubles as the merge step.
 public function addPatientToGroup(http:Client fhirClient, string groupId, string brokerScopedPatientId) returns error? {
     log:printInfo(string `[GROUP] Adding Patient/${brokerScopedPatientId} to Group/${groupId}`);
 
-    json groupJson = check fhirClient->/Group/[groupId].get();
-
-    if groupJson !is map<json> {
-        return error(string `Group/${groupId} response is not a valid JSON object`);
-    }
-
     string patientRef = string `Patient/${brokerScopedPatientId}`;
-    json? membersJson = groupJson["member"];
-    json[] members = [];
+    int maxRetries = 3;
+    int conflictStatus = 0;
+    string conflictBody = "";
 
-    if membersJson is json[] {
-        members = membersJson.clone();
-        foreach json member in members {
-            if member is map<json> {
-                json? entity = member["entity"];
-                if entity is map<json> {
-                    json? reference = entity["reference"];
-                    if reference is string && reference == patientRef {
-                        log:printInfo(string `[GROUP] Patient/${brokerScopedPatientId} already in Group/${groupId}`);
-                        return;
+    foreach int attempt in 1 ... maxRetries {
+        http:Response getResponse = check fhirClient->/Group/[groupId].get();
+        if getResponse.statusCode < 200 || getResponse.statusCode >= 300 {
+            string|error body = getResponse.getTextPayload();
+            return error(string `Failed to GET Group/${groupId} (status: ${getResponse.statusCode}): ${body is string ? body : "unknown"}`);
+        }
+
+        json bodyJson = check getResponse.getJsonPayload();
+        if bodyJson !is map<json> {
+            return error(string `Group/${groupId} response is not a valid JSON object`);
+        }
+        map<json> groupJson = bodyJson;
+
+        string? ifMatchValue = ();
+        string|http:HeaderNotFoundError etagHeader = getResponse.getHeader("ETag");
+        if etagHeader is string {
+            ifMatchValue = etagHeader;
+        } else {
+            json? metaJson = groupJson["meta"];
+            if metaJson is map<json> {
+                json? versionIdJson = metaJson["versionId"];
+                if versionIdJson is string {
+                    ifMatchValue = string `W/"${versionIdJson}"`;
+                }
+            }
+        }
+        if ifMatchValue is () {
+            log:printWarn(string `[GROUP] No ETag/versionId on Group/${groupId} — PUT will skip If-Match (OCC bypassed)`);
+        }
+
+        json? membersJson = groupJson["member"];
+        json[] members = [];
+
+        if membersJson is json[] {
+            members = membersJson.clone();
+            foreach json member in members {
+                if member is map<json> {
+                    json? entity = member["entity"];
+                    if entity is map<json> {
+                        json? reference = entity["reference"];
+                        if reference is string && reference == patientRef {
+                            log:printInfo(string `[GROUP] Patient/${brokerScopedPatientId} already in Group/${groupId}`);
+                            return;
+                        }
                     }
                 }
             }
         }
-    }
 
-    members.push({"entity": {"reference": patientRef}});
+        members.push({"entity": {"reference": patientRef}});
 
-    map<json> updatedGroup = groupJson.clone();
-    updatedGroup["member"] = members;
+        map<json> updatedGroup = groupJson.clone();
+        updatedGroup["member"] = members;
 
-    map<string|string[]> headers = {"Content-Type": "application/fhir+json"};
-    http:Response putResponse = check fhirClient->/Group/[groupId].put(updatedGroup, headers);
+        map<string|string[]> headers = {"Content-Type": "application/fhir+json"};
+        if ifMatchValue is string {
+            headers["If-Match"] = ifMatchValue;
+        }
+        http:Response putResponse = check fhirClient->/Group/[groupId].put(updatedGroup, headers);
 
-    if putResponse.statusCode >= 200 && putResponse.statusCode < 300 {
-        log:printInfo(string `[GROUP] Patient/${brokerScopedPatientId} added to Group/${groupId}`);
-        audit:auditFhirServerOperation("group-add-member", string `Group/${groupId}/Patient/${brokerScopedPatientId}`, true);
-    } else {
+        if putResponse.statusCode >= 200 && putResponse.statusCode < 300 {
+            log:printInfo(string `[GROUP] Patient/${brokerScopedPatientId} added to Group/${groupId}`);
+            audit:auditFhirServerOperation("group-add-member", string `Group/${groupId}/Patient/${brokerScopedPatientId}`, true);
+            return;
+        }
+
+        if putResponse.statusCode == 409 || putResponse.statusCode == 412 {
+            string|error body = putResponse.getTextPayload();
+            conflictStatus = putResponse.statusCode;
+            conflictBody = body is string ? body : "unknown";
+            log:printWarn(string `[GROUP] Concurrent update on Group/${groupId} (status: ${putResponse.statusCode}, attempt ${attempt}/${maxRetries}) — re-fetching and retrying`);
+            continue;
+        }
+
         string|error body = putResponse.getTextPayload();
         audit:auditFhirServerOperation("group-add-member", string `Group/${groupId}/Patient/${brokerScopedPatientId}`, false, body is string ? body : "unknown");
         return error(string `Failed to update Group/${groupId}: ${body is string ? body : "unknown"}`);
     }
+
+    audit:auditFhirServerOperation("group-add-member", string `Group/${groupId}/Patient/${brokerScopedPatientId}`, false, string `concurrent updates after ${maxRetries} attempts`);
+    return error(string `Failed to update Group/${groupId} after ${maxRetries} attempts due to concurrent updates (last status: ${conflictStatus}): ${conflictBody}`);
 }
 
 // Search FHIR Groups that contain a specific patient as a member
@@ -379,6 +470,20 @@ public function searchGroupsByPatient(http:Client fhirClient, string brokerScope
     log:printInfo(string `[GROUP] Searching groups for Patient/${brokerScopedPatientId}`);
 
     http:Response response = check fhirClient->/Group.get(member = brokerScopedPatientId);
+
+    if response.statusCode < 200 || response.statusCode >= 300 {
+        json|error errorJson = response.getJsonPayload();
+        string reason;
+        if errorJson is json {
+            reason = errorJson.toJsonString();
+        } else {
+            string|error textBody = response.getTextPayload();
+            reason = textBody is string ? textBody : "unknown";
+        }
+        log:printWarn(string `[GROUP] Group search returned ${response.statusCode} for Patient/${brokerScopedPatientId}: ${reason}`);
+        return error(string `Group search failed for Patient/${brokerScopedPatientId} (status: ${response.statusCode}): ${reason}`);
+    }
+
     json responseJson = check response.getJsonPayload();
 
     if responseJson !is map<json> {
@@ -438,7 +543,10 @@ public function getOrCreateClientSubscription(
     }
 
     if cachedSubId is string {
-        json|error existing = getSubscriptionFromFhirServer(fhirClient, cachedSubId);
+        map<json>?|error existing = getSubscriptionFromFhirServer(fhirClient, cachedSubId);
+        if existing is error {
+            return existing;
+        }
         if existing is map<json> {
             log:printInfo(string `[CLIENT SUB] Found existing subscription: ${cachedSubId}`);
             map<json> updated = mergeResourceTypeCriteria(existing, clientId, resourceTypes);
@@ -457,7 +565,10 @@ public function getOrCreateClientSubscription(
         }
         log:printInfo(string `[CLIENT SUB] Cached subscription ${cachedSubId} no longer exists, creating new`);
     } else {
-        json|error existing = getSubscriptionFromFhirServer(fhirClient, clientId);
+        map<json>?|error existing = getSubscriptionFromFhirServer(fhirClient, clientId);
+        if existing is error {
+            return existing;
+        }
         if existing is map<json> {
             log:printInfo(string `[CLIENT SUB] Subscription already exists on FHIR server: ${clientId}`);
             map<json> updated = mergeResourceTypeCriteria(existing, clientId, resourceTypes);
@@ -497,10 +608,8 @@ public function getOrCreateClientSubscription(
         }
     }
 
-    string subscriptionId = clientId;
     json subscriptionResource = {
         "resourceType": "Subscription",
-        "id": subscriptionId,
         "status": "requested",
         "reason": string `Subscription for client ${clientId}`,
         "criteria": "http://hl7.org/fhir/us/core/SubscriptionTopic/patient-data-feed",
@@ -521,14 +630,14 @@ public function getOrCreateClientSubscription(
         }
     };
 
-    _ = check createSubscriptionInFhirServer(fhirClient, subscriptionResource);
-    log:printInfo(string `[CLIENT SUB] Created new subscription: ${subscriptionId} for client: ${clientId}`);
+    string serverSubscriptionId = check createSubscriptionInFhirServer(fhirClient, subscriptionResource);
+    log:printInfo(string `[CLIENT SUB] Created new subscription: ${serverSubscriptionId} for client: ${clientId}`);
 
     lock {
-        common:clientSubscriptionIds[clientId] = subscriptionId;
+        common:clientSubscriptionIds[clientId] = serverSubscriptionId;
     }
 
-    return subscriptionId;
+    return serverSubscriptionId;
 }
 
 // Merge new resource type criteria into an existing subscription
@@ -580,10 +689,19 @@ function mergeResourceTypeCriteria(map<json> existingSubscription, string client
 // ============================================================================
 
 function extractIdFromLocation(string location) returns string {
+    string normalized = location;
+    int? historyIdx = normalized.indexOf("/_history");
+    if historyIdx is int {
+        normalized = normalized.substring(0, historyIdx);
+    }
     string:RegExp slashPattern = re `/`;
-    string[] parts = slashPattern.split(location);
-    if parts.length() > 0 {
-        return parts[parts.length() - 1];
+    string[] parts = slashPattern.split(normalized);
+    int i = parts.length() - 1;
+    while i >= 0 {
+        if parts[i].length() > 0 {
+            return parts[i];
+        }
+        i -= 1;
     }
     return location;
 }
