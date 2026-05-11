@@ -1,3 +1,19 @@
+// Copyright (c) 2026, WSO2 LLC. (http://www.wso2.com).
+
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+
+// http://www.apache.org/licenses/LICENSE-2.0
+
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 // Notification Parser - Extract patient information from standard FHIR notification Bundles
 // Implements standard-compliant parsing of FHIR R4 notification bundles
 
@@ -17,7 +33,7 @@ public configurable map<string> systemUriRegistry = {};
 // ============================================================================
 
 // Extract patient identification from a FHIR notification Bundle
-public function extractPatientIdFromNotification(json notification) returns common:ExtractedPatientInfo {
+function extractPatientIdFromNotification(json notification) returns common:ExtractedPatientInfo {
     log:printInfo("[NOTIFICATION_PARSER] Extracting patient ID from notification");
 
     common:ExtractedPatientInfo result = {};
@@ -230,7 +246,7 @@ function extractSubjectFromResource(json resourceJson) returns string? {
 }
 
 // Extract resource types from Bundle entries
-public function extractResourceTypesFromBundleMap(map<json> bundle) returns string[] {
+function extractResourceTypesFromBundleMap(map<json> bundle) returns string[] {
     string[] resourceTypes = [];
 
     log:printInfo(string `[NOTIFICATION_PARSER] extractResourceTypesFromBundleMap called`);
@@ -287,7 +303,7 @@ public function extractResourceTypesFromBundleMap(map<json> bundle) returns stri
 }
 
 // Extract resource types from Bundle entries (legacy - takes json)
-public function extractResourceTypesFromBundle(json bundle) returns string[] {
+function extractResourceTypesFromBundle(json bundle) returns string[] {
     string[] resourceTypes = [];
 
     if bundle !is map<json> {
@@ -348,7 +364,7 @@ function extractPatientIdFromReference(string reference) returns string? {
 }
 
 // Extract demographics from the notification payload (if provided in wrapper format)
-public function extractDemographicsFromPayload(json payload) returns common:ClientDemographics? {
+function extractDemographicsFromPayload(json payload) returns common:ClientDemographics? {
     if payload !is map<json> {
         return ();
     }

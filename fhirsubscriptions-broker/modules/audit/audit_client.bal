@@ -1,3 +1,19 @@
+// Copyright (c) 2026, WSO2 LLC. (http://www.wso2.com).
+
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+
+// http://www.apache.org/licenses/LICENSE-2.0
+
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 // Audit Service Client for FHIR Notification Broker
 // =================================================
 // Integrates with FHIR Audit Service for ITI-20 ATNA compliance
@@ -123,7 +139,7 @@ isolated function buildAuditEvent(string subTypeCode, string actionCode, boolean
 # + success - Whether the operation succeeded
 # + reason - Optional failure reason
 # + return - Configured audit event
-public isolated function auditTokenIssueEvent(string clientId, boolean success, string reason = "")
+isolated function auditTokenIssueEvent(string clientId, boolean success, string reason = "")
         returns international401:AuditEvent {
     string outcomeDesc = reason != "" ? reason : (success ? "Token issued successfully" : "");
     return buildAuditEvent("operation", "E", success, outcomeDesc, clientId, [
@@ -136,7 +152,7 @@ public isolated function auditTokenIssueEvent(string clientId, boolean success, 
 # + clientId - The client ID that failed validation
 # + reason - Failure reason
 # + return - Configured audit event
-public isolated function auditTokenValidationFailureEvent(string clientId, string reason)
+isolated function auditTokenValidationFailureEvent(string clientId, string reason)
         returns international401:AuditEvent {
     return buildAuditEvent("operation", "E", false, reason, clientId, [
         auditGetEntity("2", "24", string `Token/${clientId}`)
@@ -150,7 +166,7 @@ public isolated function auditTokenValidationFailureEvent(string clientId, strin
 # + success - Whether the operation succeeded
 # + reason - Optional failure reason
 # + return - Configured audit event
-public isolated function auditNotificationReceivedEvent(string sourceSystem, int patientCount, boolean success,
+isolated function auditNotificationReceivedEvent(string sourceSystem, int patientCount, boolean success,
         string reason = "") returns international401:AuditEvent {
     string outcomeDesc = reason != "" ? reason : (success ? string `Notification received with ${patientCount} patient(s)` : "");
     return buildAuditEvent("create", "C", success, outcomeDesc, sourceSystem, [
@@ -166,7 +182,7 @@ public isolated function auditNotificationReceivedEvent(string sourceSystem, int
 # + success - Whether the operation succeeded
 # + reason - Optional failure reason
 # + return - Configured audit event
-public isolated function auditNotificationRoutedEvent(string clientId, string patientId, string resourceType,
+isolated function auditNotificationRoutedEvent(string clientId, string patientId, string resourceType,
         boolean success, string reason = "") returns international401:AuditEvent {
     string outcomeDesc = reason != "" ? reason : (success ? string `${resourceType} routed for Patient/${patientId}` : "");
     return buildAuditEvent("read", "R", success, outcomeDesc, clientId, [
@@ -182,7 +198,7 @@ public isolated function auditNotificationRoutedEvent(string clientId, string pa
 # + success - Whether the operation succeeded
 # + reason - Optional failure reason
 # + return - Configured audit event
-public isolated function auditPatientResolutionEvent(string patientRef, string method, boolean success,
+isolated function auditPatientResolutionEvent(string patientRef, string method, boolean success,
         string reason = "") returns international401:AuditEvent {
     string outcomeDesc = reason != "" ? reason : (success ? string `Patient resolved via ${method}` : "");
     return buildAuditEvent("operation", "E", success, outcomeDesc, "mpi-client", [
@@ -197,7 +213,7 @@ public isolated function auditPatientResolutionEvent(string patientRef, string m
 # + success - Whether the operation succeeded
 # + reason - Optional failure reason
 # + return - Configured audit event
-public isolated function auditSubscriptionCreatedEvent(string clientId, string patientId, boolean success,
+isolated function auditSubscriptionCreatedEvent(string clientId, string patientId, boolean success,
         string reason = "") returns international401:AuditEvent {
     string outcomeDesc = reason != "" ? reason : (success ? string `Subscription created for Patient/${patientId}` : "");
     return buildAuditEvent("create", "C", success, outcomeDesc, clientId, [
@@ -212,7 +228,7 @@ public isolated function auditSubscriptionCreatedEvent(string clientId, string p
 # + success - Whether the operation succeeded
 # + reason - Optional failure reason
 # + return - Configured audit event
-public isolated function auditSubscriptionDeletedEvent(string clientId, boolean success, string reason = "")
+isolated function auditSubscriptionDeletedEvent(string clientId, boolean success, string reason = "")
         returns international401:AuditEvent {
     string outcomeDesc = reason != "" ? reason : (success ? "Subscription deleted" : "");
     return buildAuditEvent("delete", "D", success, outcomeDesc, clientId, [
@@ -227,7 +243,7 @@ public isolated function auditSubscriptionDeletedEvent(string clientId, boolean 
 # + success - Whether the operation succeeded
 # + reason - Optional failure reason
 # + return - Configured audit event
-public isolated function auditDataAccessEvent(string clientId, string resourceRef, boolean success,
+isolated function auditDataAccessEvent(string clientId, string resourceRef, boolean success,
         string reason = "") returns international401:AuditEvent {
     string outcomeDesc = reason != "" ? reason : (success ? string `Accessed ${resourceRef}` : "");
     return buildAuditEvent("read", "R", success, outcomeDesc, clientId, [
@@ -241,7 +257,7 @@ public isolated function auditDataAccessEvent(string clientId, string resourceRe
 # + success - Whether the operation succeeded
 # + reason - Optional failure reason
 # + return - Configured audit event
-public isolated function auditClientRegisteredEvent(string clientName, boolean success, string reason = "")
+isolated function auditClientRegisteredEvent(string clientName, boolean success, string reason = "")
         returns international401:AuditEvent {
     string outcomeDesc = reason != "" ? reason : (success ? string `Client ${clientName} registered` : "");
     return buildAuditEvent("create", "C", success, outcomeDesc, clientName, [
@@ -255,7 +271,7 @@ public isolated function auditClientRegisteredEvent(string clientName, boolean s
 # + success - Whether the operation succeeded
 # + reason - Optional failure reason
 # + return - Configured audit event
-public isolated function auditClientDeletedEvent(string clientName, boolean success, string reason = "")
+isolated function auditClientDeletedEvent(string clientName, boolean success, string reason = "")
         returns international401:AuditEvent {
     string outcomeDesc = reason != "" ? reason : (success ? string `Client ${clientName} deleted` : "");
     return buildAuditEvent("delete", "D", success, outcomeDesc, clientName, [
@@ -270,7 +286,7 @@ public isolated function auditClientDeletedEvent(string clientName, boolean succ
 # + success - Whether the operation succeeded
 # + reason - Optional failure reason
 # + return - Configured audit event
-public isolated function auditWebSubOperationEvent(string operation, string topicId, boolean success,
+isolated function auditWebSubOperationEvent(string operation, string topicId, boolean success,
         string reason = "") returns international401:AuditEvent {
     string outcomeDesc = reason != "" ? reason : (success ? string `WebSub ${operation} for topic ${topicId}` : "");
     return buildAuditEvent("operation", "E", success, outcomeDesc, "websub-hub", [
@@ -285,7 +301,7 @@ public isolated function auditWebSubOperationEvent(string operation, string topi
 # + success - Whether the operation succeeded
 # + reason - Optional failure reason
 # + return - Configured audit event
-public isolated function auditFhirServerOperationEvent(string operation, string resourceRef, boolean success,
+isolated function auditFhirServerOperationEvent(string operation, string resourceRef, boolean success,
         string reason = "") returns international401:AuditEvent {
     string actionCode = "E";
     string subTypeCode = "operation";
@@ -309,7 +325,7 @@ public isolated function auditFhirServerOperationEvent(string operation, string 
 # + success - Whether the operation succeeded
 # + reason - Optional failure reason
 # + return - Configured audit event
-public isolated function auditMappingOperationEvent(string operation, string resourceRef, boolean success,
+isolated function auditMappingOperationEvent(string operation, string resourceRef, boolean success,
         string reason = "") returns international401:AuditEvent {
     string actionCode = operation == "mapping-create" ? "C" : "R";
     string subTypeCode = operation == "mapping-create" ? "create" : "read";
@@ -326,7 +342,7 @@ public isolated function auditMappingOperationEvent(string operation, string res
 # + success - Whether the operation succeeded
 # + reason - Optional failure reason
 # + return - Configured audit event
-public isolated function auditSystemOperationEvent(string actor, string operation, boolean success,
+isolated function auditSystemOperationEvent(string actor, string operation, boolean success,
         string reason = "") returns international401:AuditEvent {
     string outcomeDesc = reason != "" ? reason : (success ? string `System operation: ${operation}` : "");
     return buildAuditEvent("operation", "E", success, outcomeDesc, actor, [
@@ -345,7 +361,7 @@ public isolated function auditSystemOperationEvent(string actor, string operatio
 # + success - Whether the operation succeeded
 # + reason - Optional failure reason
 # + return - Configured audit event
-public isolated function auditSubscriptionTokenGeneratedEvent(string clientId, string subscriptionId, boolean success,
+isolated function auditSubscriptionTokenGeneratedEvent(string clientId, string subscriptionId, boolean success,
         string reason = "") returns international401:AuditEvent {
     string outcomeDesc = reason != "" ? reason : (success ? string `Subscription token generated for ${subscriptionId}` : "");
     return buildAuditEvent("operation", "E", success, outcomeDesc, clientId, [
@@ -362,7 +378,7 @@ public isolated function auditSubscriptionTokenGeneratedEvent(string clientId, s
 # + scope - The authorization scope (PATIENT, PRACTITIONER, PRIVILEGED)
 # + reason - Optional reason for the decision
 # + return - Configured audit event
-public isolated function auditAuthzDecisionEvent(string clientId, string patientId, boolean authorized,
+isolated function auditAuthzDecisionEvent(string clientId, string patientId, boolean authorized,
         string? scope = (), string reason = "") returns international401:AuditEvent {
     string scopeStr = scope ?: "none";
     string outcomeDesc = reason != "" ? reason : (authorized
@@ -409,7 +425,7 @@ public function auditSubscriptionCreated(string clientId, string patientId, bool
 }
 
 # Audit a subscription deletion (fire-and-forget)
-public function auditSubscriptionDeleted(string clientId, boolean success, string reason = "") {
+function auditSubscriptionDeleted(string clientId, boolean success, string reason = "") {
     _ = start sendAuditEvent(auditSubscriptionDeletedEvent(clientId, success, reason));
 }
 
@@ -444,12 +460,12 @@ public function auditMappingOperation(string operation, string resourceRef, bool
 }
 
 # Audit system/admin operation (fire-and-forget)
-public function auditSystemOperation(string actor, string operation, boolean success, string reason = "") {
+function auditSystemOperation(string actor, string operation, boolean success, string reason = "") {
     _ = start sendAuditEvent(auditSystemOperationEvent(actor, operation, success, reason));
 }
 
 # Audit subscription token generation (fire-and-forget)
-public function auditSubscriptionTokenGenerated(string clientId, string subscriptionId, boolean success, string reason = "") {
+function auditSubscriptionTokenGenerated(string clientId, string subscriptionId, boolean success, string reason = "") {
     _ = start sendAuditEvent(auditSubscriptionTokenGeneratedEvent(clientId, subscriptionId, success, reason));
 }
 
@@ -464,7 +480,7 @@ public function auditAuthzDecision(string clientId, string patientId, boolean au
 # + success - Whether the token exchange succeeded
 # + reason - Optional failure reason
 # + return - Configured audit event
-public isolated function auditAsgardeoTokenExchangeEvent(string clientId, boolean success, string reason = "")
+isolated function auditAsgardeoTokenExchangeEvent(string clientId, boolean success, string reason = "")
         returns international401:AuditEvent {
     string outcomeDesc = reason != "" ? reason : (success ? "Asgardeo token exchange successful" : "Asgardeo token exchange failed");
     return buildAuditEvent("operation", "E", success, outcomeDesc, clientId, [
