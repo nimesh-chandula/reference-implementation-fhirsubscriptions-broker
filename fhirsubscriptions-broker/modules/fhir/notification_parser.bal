@@ -28,6 +28,22 @@ import wso2healthcare/broker.common;
 // ============================================================================
 public configurable map<string> systemUriRegistry = {};
 
+// Canonical list of FHIR resource types treated as "clinical" by the broker.
+// Used both when scanning a bundle for a subject reference and when grouping
+// clinical resources under a Patient. Keep these two call-sites pointing at
+// the same constant to avoid the lists drifting apart.
+final readonly & string[] CLINICAL_RESOURCE_TYPES = [
+    "Encounter", "Observation", "Condition", "Procedure",
+    "MedicationRequest", "DiagnosticReport", "AllergyIntolerance", "Immunization",
+    "CarePlan", "CareTeam", "Goal", "ServiceRequest", "DocumentReference"
+];
+
+// Broker-scoped patient IDs use the "UP" prefix followed by one or more
+// alphanumeric characters. Matching the full shape (rather than just the
+// prefix) prevents source-system IDs that happen to begin with "UP" from
+// being misclassified as broker-scoped.
+final string:RegExp BROKER_PATIENT_ID_PATTERN = re `UP[A-Za-z0-9]+`;
+
 // ============================================================================
 // MAIN ENTRY POINT
 // ============================================================================
@@ -62,7 +78,7 @@ function extractPatientIdFromNotification(json notification) returns common:Extr
         log:printInfo(string `[NOTIFICATION_PARSER] Found subject reference: ${subjectRef}`);
 
         string? brokerPatientId = extractPatientIdFromReference(subjectRef);
-        if brokerPatientId is string && brokerPatientId.startsWith("UP") {
+        if brokerPatientId is string && BROKER_PATIENT_ID_PATTERN.isFullMatch(brokerPatientId) {
             result.brokerScopedPatientId = brokerPatientId;
             log:printInfo(string `[NOTIFICATION_PARSER] Detected broker-scoped patient ID: ${brokerPatientId}`);
         }
@@ -127,7 +143,16 @@ function extractPatientIdentifierFromBundle(json bundle) returns common:PatientI
     return ();
 }
 
-// Extract identifier from a Patient resource
+# Extract identifier from a Patient resource.
+#
+# Selection strategy: returns the **first** identifier whose `system` and
+# `value` are both strings, in their order of appearance in the Patient's
+# `identifier` array. There is no priority ordering between identifier systems
+# today; if a preferred-system list is needed in the future, slot the lookup
+# in here and fall back to the existing first-found behavior.
+#
+# + patient - the FHIR Patient resource as JSON
+# + return - the chosen identifier, or `()` if none has both system and value
 function extractIdentifierFromPatient(json patient) returns common:PatientIdentifier? {
     if patient !is map<json> {
         return ();
@@ -183,9 +208,6 @@ function extractSubjectReferenceFromBundle(json bundle) returns string? {
         return ();
     }
 
-    string[] clinicalResourceTypes = ["Encounter", "Observation", "Condition", "Procedure",
-        "MedicationRequest", "DiagnosticReport", "AllergyIntolerance", "Immunization"];
-
     foreach json entry in entriesJson {
         if entry !is map<json> {
             continue;
@@ -202,7 +224,7 @@ function extractSubjectReferenceFromBundle(json bundle) returns string? {
         }
 
         boolean isClinical = false;
-        foreach string clinicalType in clinicalResourceTypes {
+        foreach string clinicalType in CLINICAL_RESOURCE_TYPES {
             if entryResourceType == clinicalType {
                 isClinical = true;
                 break;
@@ -435,32 +457,32 @@ public function groupResourcesByPatient(map<json> bundle) returns map<common:Pat
             }
 
             if localRef != "" {
-                common:PatientIdentifier? identifier = extractIdentifierFromPatient(resourceJson);
-                common:ClientDemographics? demographics = extractDemographicsFromPatientResource(resourceJson);
+                if patientGroups.hasKey(localRef) {
+                    log:printWarn(string `[NOTIFICATION_PARSER] Duplicate Patient resource for ${localRef} in bundle; keeping first occurrence and skipping the second`);
+                } else {
+                    common:PatientIdentifier? identifier = extractIdentifierFromPatient(resourceJson);
+                    common:ClientDemographics? demographics = extractDemographicsFromPatientResource(resourceJson);
 
-                common:PatientResourceGroup group = {
-                    localPatientRef: localRef,
-                    patientResource: resourceJson,
-                    clinicalResources: [],
-                    identifier: identifier,
-                    demographics: demographics
-                };
-                patientGroups[localRef] = group;
+                    common:PatientResourceGroup group = {
+                        localPatientRef: localRef,
+                        patientResource: resourceJson,
+                        clinicalResources: [],
+                        identifier: identifier,
+                        demographics: demographics
+                    };
+                    patientGroups[localRef] = group;
 
-                log:printInfo(string `[NOTIFICATION_PARSER] Created patient group for: ${localRef}`);
+                    log:printInfo(string `[NOTIFICATION_PARSER] Created patient group for: ${localRef}`);
 
-                if identifier is common:PatientIdentifier {
-                    log:printInfo(string `[NOTIFICATION_PARSER] Patient identifier: system=${identifier.system}, value=${identifier.value}`);
+                    if identifier is common:PatientIdentifier {
+                        log:printInfo(string `[NOTIFICATION_PARSER] Patient identifier: system=${identifier.system}, value=${identifier.value}`);
+                    }
                 }
             }
         }
     }
 
     // Second pass: Associate clinical resources with patients
-    string[] clinicalResourceTypes = ["Encounter", "Observation", "Condition", "Procedure",
-        "MedicationRequest", "DiagnosticReport", "AllergyIntolerance", "Immunization",
-        "CarePlan", "CareTeam", "Goal", "ServiceRequest", "DocumentReference"];
-
     foreach json entry in entriesJson {
         if entry !is map<json> {
             continue;
@@ -477,7 +499,7 @@ public function groupResourcesByPatient(map<json> bundle) returns map<common:Pat
         }
 
         boolean isClinical = false;
-        foreach string clinicalType in clinicalResourceTypes {
+        foreach string clinicalType in CLINICAL_RESOURCE_TYPES {
             if resourceType == clinicalType {
                 isClinical = true;
                 break;
@@ -541,10 +563,9 @@ function findMatchingPatientGroup(map<common:PatientResourceGroup> patientGroups
         return directMatch;
     }
 
+    // Match only on a slash-delimited suffix so a reference like "Patient/123"
+    // doesn't accidentally match a stored key ending in "...UP123".
     foreach string localRef in patientGroups.keys() {
-        if localRef.endsWith(patientRef) {
-            return patientGroups[localRef];
-        }
         if localRef.endsWith(string `/${patientRef}`) {
             return patientGroups[localRef];
         }
@@ -642,10 +663,11 @@ public function buildPatientNotificationBundle(common:PatientResourceGroup patie
             }
         }
 
-        entries.push({
-            "fullUrl": fullUrl,
-            "resource": updatedResource
-        });
+        map<json> entry = {"resource": updatedResource};
+        if fullUrl != "" {
+            entry["fullUrl"] = fullUrl;
+        }
+        entries.push(entry);
     }
 
     map<json> notificationBundle = {
@@ -695,10 +717,10 @@ public function buildPerResourceNotificationBundles(common:PatientResourceGroup 
             }
         }
 
-        json clinicalEntry = {
-            "fullUrl": fullUrl,
-            "resource": updatedResource
-        };
+        map<json> clinicalEntry = {"resource": updatedResource};
+        if fullUrl != "" {
+            clinicalEntry["fullUrl"] = fullUrl;
+        }
 
         map<json> singleResourceBundle = {
             "resourceType": "Bundle",

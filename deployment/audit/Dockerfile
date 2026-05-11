@@ -18,7 +18,10 @@ FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 ARG SUBDIR=miscellaneous/audit-service
 COPY --from=build /src/repo/${SUBDIR}/target/bin/ /app/bin/
-RUN ln -s "$(ls /app/bin/*.jar | head -n1)" /app/service.jar \
- && mkdir -p /tmp/audit-logs
+RUN addgroup -S audit && adduser -S -G audit audit \
+ && ln -s "$(ls /app/bin/*.jar | head -n1)" /app/service.jar \
+ && mkdir -p /tmp/audit-logs \
+ && chown -R audit:audit /app /tmp/audit-logs
+USER audit
 EXPOSE 9093
 ENTRYPOINT ["java","-jar","/app/service.jar"]

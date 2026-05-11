@@ -6,7 +6,7 @@ Registry, Audit, and an existing Kafka WebSubHub stack pointed at by
 
 ## Layout
 
-```
+```text
 deployment/
 ├── docker-compose.yml          # FHIR + CR + Audit + Broker
 ├── start.sh                    # boots WebSubHub + this stack
@@ -39,7 +39,7 @@ Inside the `broker-net` compose network, services reach each other by name:
 
 1. **Hosts file** — add to your OS hosts file (required by WebSubHub's NGINX):
 
-   ```
+   ```text
    127.0.0.1 dev.websubhub.com
    ```
 

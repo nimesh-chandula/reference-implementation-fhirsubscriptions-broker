@@ -69,6 +69,19 @@ function handleEventsOperation(
     int untilNumber = eventsUntilNumber ?: state.lastEventNumber;
     int pageSize = countParam ?: common:DEFAULT_EVENTS_PAGE_SIZE;
 
+    if countParam is int && countParam <= 0 {
+        return <http:BadRequest>{
+            body: {
+                "resourceType": "OperationOutcome",
+                "issue": [{
+                    "severity": "error",
+                    "code": "invalid",
+                    "diagnostics": "_count must be a positive integer"
+                }]
+            }
+        };
+    }
+
     if sinceNumber < 0 || untilNumber < sinceNumber {
         return <http:BadRequest>{
             body: {
@@ -96,25 +109,37 @@ function handleEventsOperation(
         string communicationId = string `${clientId}-${n}`;
         CommunicationDetails|http:NotFound|http:InternalServerError commDetails = fetchCommunicationDetails(communicationId);
 
-        if commDetails is CommunicationDetails {
-            boolean authorized = true;
-            if auth:authzEnabled && validatedToken.patient != "" && commDetails.patientId is string {
+        if commDetails !is CommunicationDetails {
+            // Don't advance the cursor past an unreadable event — leave it
+            // visible so the gap surfaces in logs and on the next retrieval.
+            log:printError(string `[EVENTS] Halting pagination at Communication/${communicationId}: fetch returned an error`);
+            break;
+        }
+
+        boolean authorized = true;
+        if auth:authzEnabled && validatedToken.patient != "" {
+            if commDetails.patientId is string {
                 string eventPatientId = <string>commDetails.patientId;
                 map<json> jwtClaims = {"patient": validatedToken.patient};
                 common:AuthzResult authzResult = auth:checkAuthorization(jwtClaims, eventPatientId);
                 authorized = authzResult.isAuthorized;
+            } else {
+                // Fail-closed: the event has no usable patient context but
+                // patient-scoped authz is enabled — refuse to expose it.
+                log:printWarn(string `[EVENTS] Communication/${communicationId} has no patientId; denying under patient-scoped authz`);
+                authorized = false;
             }
+        }
 
-            if authorized {
-                string resourceType = extractResourceTypeFromReference(commDetails.contentReference);
-                string currentTimestamp = time:utcToString(time:utcNow());
-                notificationEvents.push({
-                    eventNumber: n,
-                    timestamp: currentTimestamp,
-                    focusReference: string `${fhir:brokerBaseUrl}/${commDetails.contentReference}`,
-                    focusType: resourceType
-                });
-            }
+        if authorized {
+            string resourceType = extractResourceTypeFromReference(commDetails.contentReference);
+            string eventTimestamp = commDetails.sent ?: time:utcToString(time:utcNow());
+            notificationEvents.push({
+                eventNumber: n,
+                timestamp: eventTimestamp,
+                focusReference: string `${fhir:brokerBaseUrl}/${commDetails.contentReference}`,
+                focusType: resourceType
+            });
         }
         lastScannedEvent = n;
         n += 1;
@@ -196,6 +221,7 @@ function buildNotificationEventJson(NotificationEventLite[] events) returns json
 type CommunicationDetails record {|
     string contentReference;
     string? patientId;
+    string? sent;
 |};
 
 // Fetch a Communication resource and extract contentReference and subject patient
@@ -229,6 +255,12 @@ function fetchCommunicationDetails(string communicationId)
             }
         }
 
+        string? sent = ();
+        json? sentJson = commResult["sent"];
+        if sentJson is string {
+            sent = sentJson;
+        }
+
         json? payloadJson = commResult["payload"];
         if payloadJson is json[] && payloadJson.length() > 0 {
             json? firstPayload = payloadJson[0];
@@ -237,7 +269,7 @@ function fetchCommunicationDetails(string communicationId)
                 if contentRefJson is map<json> {
                     json? refJson = contentRefJson["reference"];
                     if refJson is string {
-                        return {contentReference: refJson, patientId: eventPatientId};
+                        return {contentReference: refJson, patientId: eventPatientId, sent: sent};
                     }
                 }
             }

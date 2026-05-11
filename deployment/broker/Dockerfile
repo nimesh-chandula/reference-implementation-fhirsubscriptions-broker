@@ -13,7 +13,10 @@ RUN bal build
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 COPY --from=build /src/target/bin/ /app/bin/
-RUN ln -s "$(ls /app/bin/*.jar | head -n1)" /app/service.jar
+RUN addgroup -S broker && adduser -S -G broker broker \
+ && ln -s "$(ls /app/bin/*.jar | head -n1)" /app/service.jar \
+ && chown -R broker:broker /app
+USER broker
 ENV BAL_CONFIG_FILES=/app/Config.toml
 EXPOSE 9091
 ENTRYPOINT ["java","-jar","/app/service.jar"]

@@ -18,8 +18,11 @@ FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 ARG SUBDIR=cr/cr-core
 COPY --from=build /src/repo/${SUBDIR}/target/bin/ /app/bin/
-RUN ln -s "$(ls /app/bin/*.jar | head -n1)" /app/service.jar \
- && mkdir -p /app/data
+RUN addgroup -S cruser && adduser -S -G cruser cruser \
+ && ln -s "$(ls /app/bin/*.jar | head -n1)" /app/service.jar \
+ && mkdir -p /app/data \
+ && chown -R cruser:cruser /app
+USER cruser
 ENV BAL_CONFIG_FILES=/app/Config.toml
 EXPOSE 9093
 ENTRYPOINT ["java","-jar","/app/service.jar"]

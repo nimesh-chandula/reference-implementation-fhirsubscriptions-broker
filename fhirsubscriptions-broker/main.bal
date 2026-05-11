@@ -47,15 +47,28 @@ final http:ListenerConfiguration listenerConfig =
 
 listener http:Listener brokerListener = check new (brokerPort, listenerConfig);
 
-// CORS configuration for browser-based clients
-final http:CorsConfig corsConfig = {
-    allowOrigins: allowedCorsOrigins,
-    allowCredentials: true,
-    allowHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
-    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    exposeHeaders: ["Content-Type", "Authorization"],
-    maxAge: 86400
-};
+// CORS configuration for browser-based clients.
+// Wildcard origin '*' is incompatible with allowCredentials=true per the CORS
+// spec; reject it at startup so we fail fast instead of returning headers the
+// browser will silently drop.
+function buildValidatedCorsConfig() returns http:CorsConfig {
+    foreach string origin in allowedCorsOrigins {
+        if origin == "*" {
+            log:printError("[CORS] '*' is not allowed in allowedCorsOrigins when allowCredentials=true");
+            panic error("CORS misconfigured: wildcard '*' origin is incompatible with allowCredentials=true");
+        }
+    }
+    return {
+        allowOrigins: allowedCorsOrigins,
+        allowCredentials: true,
+        allowHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+        allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+        exposeHeaders: ["Content-Type", "Authorization"],
+        maxAge: 86400
+    };
+}
+
+final http:CorsConfig corsConfig = buildValidatedCorsConfig();
 
 // ============================================================================
 // BROKER SERVICE
@@ -251,14 +264,7 @@ service /fhir on brokerListener {
         if statusCode == 404 {
             audit:auditDataAccess(callerId, resourceRef, false, "upstream 404");
             return <http:NotFound>{
-                body: {
-                    "resourceType": "OperationOutcome",
-                    "issue": [{
-                        "severity": "error",
-                        "code": "not-found",
-                        "diagnostics": string `Resource ${resourceType}/${resourceId} not found`
-                    }]
-                }
+                body: buildOperationOutcome("not-found", string `Resource ${resourceType}/${resourceId} not found`)
             };
         }
         if statusCode == 401 {
@@ -365,14 +371,7 @@ service /fhir on brokerListener {
                 log:printWarn(string `[RESOURCE RETRIEVAL] Authorization denied for patient=${resourcePatientId}`);
                 audit:auditAuthzDecision(callerId, resourcePatientId, false, authzResult.scope, "Patient-level access denied");
                 return <http:Forbidden>{
-                    body: {
-                        "resourceType": "OperationOutcome",
-                        "issue": [{
-                            "severity": "error",
-                            "code": "forbidden",
-                            "diagnostics": "You are not authorized to access this patient's resources"
-                        }]
-                    }
+                    body: buildOperationOutcome("forbidden", "You are not authorized to access this patient's resources")
                 };
             }
             audit:auditAuthzDecision(callerId, resourcePatientId, true, authzResult.scope);

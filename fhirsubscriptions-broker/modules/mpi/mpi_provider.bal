@@ -25,12 +25,27 @@ function resolveToBrokerScopedId(string systemId, string systemPatientId) return
     return crResolveToBrokerScopedId(systemId, systemPatientId);
 }
 
-// Search for patient by demographics
+# Search the MPI for a patient matching the supplied demographics.
+#
+# Delegates to the OpenHIE Client Registry provider; future provider
+# alternatives would be dispatched from here.
+#
+# + demographics - patient demographics to match against (name, DOB, etc.)
+# + return - the broker-scoped patient ID of the match, or an error if no
+#            match is found or the lookup fails
 public function searchPatientByDemographics(common:ClientDemographics demographics) returns string|error {
     return crSearchByDemographics(demographics);
 }
 
-// Create new patient
+# Create a new patient in the MPI and link it to the originating system's
+# patient identifier.
+#
+# + demographics - patient demographics for the new MPI record
+# + systemId - identifier of the source system (matches a key in the
+#              configured systemUriRegistry)
+# + systemPatientId - the source system's patient ID being onboarded
+# + return - the broker-scoped patient ID assigned to the new record, or an
+#            error if the create fails
 public function createPatientInMPI(common:ClientDemographics demographics, string systemId, string systemPatientId) returns string|error {
     return crCreatePatient(demographics, systemId, systemPatientId);
 }

@@ -33,6 +33,14 @@ if [[ ! -d "$WEBSUBHUB_DIR" ]]; then
   err "Set WEBSUBHUB_DIR to the path containing docker-compose.yml for the Kafka WebSubHub stack."
   exit 1
 fi
+if [[ ! -f "$WEBSUBHUB_DIR/docker-compose.yml" \
+   && ! -f "$WEBSUBHUB_DIR/docker-compose.yaml" \
+   && ! -f "$WEBSUBHUB_DIR/compose.yml" \
+   && ! -f "$WEBSUBHUB_DIR/compose.yaml" ]]; then
+  err "No Compose manifest found in $WEBSUBHUB_DIR"
+  err "Expected one of: docker-compose.yml, docker-compose.yaml, compose.yml, compose.yaml"
+  exit 1
+fi
 log "Starting WebSubHub stack in $WEBSUBHUB_DIR"
 ( cd "$WEBSUBHUB_DIR" && docker compose up -d )
 

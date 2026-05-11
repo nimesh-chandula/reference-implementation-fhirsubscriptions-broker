@@ -19,8 +19,11 @@ WORKDIR /app
 ARG SUBDIR=miscellaneous/fhir-server
 COPY --from=build /src/repo/${SUBDIR}/target/bin/ /app/bin/
 COPY --from=build /src/repo/${SUBDIR}/Config.toml /app/Config.toml
-RUN ln -s "$(ls /app/bin/*.jar | head -n1)" /app/service.jar \
- && mkdir -p /app/data
+RUN addgroup -S fhirsvc && adduser -S -G fhirsvc fhirsvc \
+ && ln -s "$(ls /app/bin/*.jar | head -n1)" /app/service.jar \
+ && mkdir -p /app/data \
+ && chown -R fhirsvc:fhirsvc /app
+USER fhirsvc
 ENV BAL_CONFIG_FILES=/app/Config.toml
 EXPOSE 9090
 ENTRYPOINT ["java","-jar","/app/service.jar"]
